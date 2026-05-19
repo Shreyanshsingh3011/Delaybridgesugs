@@ -1,115 +1,189 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --db-bg: #07070e;
+  --db-panel: #0e0e1a;
+  --db-panel-2: #14142a;
+  --db-border: #1f1f3a;
+  --db-text: #e7e8ee;
+  --db-muted: #8a8aa3;
+  --db-accent: #00aaff;
+  --db-success: #00cc88;
+  --db-warning: #ff8800;
+  --db-danger: #ff4444;
+}
+
+html, body, #root {
+  background: var(--db-bg);
+  color: var(--db-text);
+  min-height: 100vh;
+}
+
 body {
-    margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(800px 600px at 90% -10%, rgba(0, 170, 255, 0.08), transparent 60%),
+    radial-gradient(700px 500px at -10% 110%, rgba(0, 204, 136, 0.06), transparent 65%),
+    var(--db-bg);
+  background-attachment: fixed;
 }
 
-code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+@layer base {
+  :root {
+    --background: 240 22% 4%;
+    --foreground: 230 18% 92%;
+    --card: 240 30% 7%;
+    --card-foreground: 230 18% 92%;
+    --popover: 240 30% 7%;
+    --popover-foreground: 230 18% 92%;
+    --primary: 200 100% 50%;
+    --primary-foreground: 240 22% 4%;
+    --secondary: 240 25% 12%;
+    --secondary-foreground: 230 18% 92%;
+    --muted: 240 25% 12%;
+    --muted-foreground: 230 10% 60%;
+    --accent: 200 100% 50%;
+    --accent-foreground: 240 22% 4%;
+    --destructive: 0 100% 64%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 20% 18%;
+    --input: 240 20% 18%;
+    --ring: 200 100% 50%;
+    --radius: 0.5rem;
+  }
 }
 
 @layer base {
-    :root {
-        --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
-        --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
-        --destructive: 0 84.2% 60.2%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
-    }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
-    }
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
 }
 
-@layer base {
-    * {
-        @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
-    }
+.db-card {
+  background: linear-gradient(180deg, var(--db-panel) 0%, var(--db-panel-2) 100%);
+  border: 1px solid var(--db-border);
+  border-radius: 14px;
+}
+.db-divider { border-color: var(--db-border); }
+
+.db-accent { color: var(--db-accent); }
+.db-success { color: var(--db-success); }
+.db-warning { color: var(--db-warning); }
+.db-danger { color: var(--db-danger); }
+
+.db-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.db-chip-blue   { background: rgba(0, 170, 255, 0.12); color: #6cd0ff; border: 1px solid rgba(0,170,255,0.25); }
+.db-chip-orange { background: rgba(255, 136, 0, 0.12); color: #ffb265; border: 1px solid rgba(255,136,0,0.25); }
+.db-chip-purple { background: rgba(170, 120, 255, 0.12); color: #c7a5ff; border: 1px solid rgba(170,120,255,0.25); }
+.db-chip-green  { background: rgba(0, 204, 136, 0.12); color: #5bd9a8; border: 1px solid rgba(0,204,136,0.25); }
+.db-chip-red    { background: rgba(255, 68, 68, 0.12); color: #ff8a8a; border: 1px solid rgba(255,68,68,0.25); }
+.db-chip-grey   { background: rgba(255, 255, 255, 0.05); color: var(--db-muted); border: 1px solid var(--db-border); }
+
+.db-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.db-dot.on  { background: var(--db-success); box-shadow: 0 0 12px rgba(0,204,136,0.6); }
+.db-dot.off { background: #3a3a55; }
+
+.db-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--db-border);
+  background: rgba(255,255,255,0.02);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--db-muted);
+  cursor: pointer; transition: all .2s;
+}
+.db-step.active { color: var(--db-text); border-color: var(--db-accent); box-shadow: 0 0 0 1px rgba(0,170,255,0.25) inset; }
+.db-step.done   { color: var(--db-success); border-color: rgba(0,204,136,0.4); }
+
+.db-progress-line {
+  height: 2px; flex: 1; background: var(--db-border); position: relative;
+}
+.db-progress-line.done { background: var(--db-success); }
+
+pre.db-code {
+  font-family: "IBM Plex Mono", monospace;
+  background: #050510;
+  border: 1px solid var(--db-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: #c9c9da;
+  overflow-x: auto;
+  line-height: 1.55;
 }
 
-@layer base {
-    [data-debug-wrapper="true"] {
-        display: contents !important;
-    }
-
-    [data-debug-wrapper="true"] > * {
-        margin-left: inherit;
-        margin-right: inherit;
-        margin-top: inherit;
-        margin-bottom: inherit;
-        padding-left: inherit;
-        padding-right: inherit;
-        padding-top: inherit;
-        padding-bottom: inherit;
-        column-gap: inherit;
-        row-gap: inherit;
-        gap: inherit;
-        border-left-width: inherit;
-        border-right-width: inherit;
-        border-top-width: inherit;
-        border-bottom-width: inherit;
-        border-left-style: inherit;
-        border-right-style: inherit;
-        border-top-style: inherit;
-        border-bottom-style: inherit;
-        border-left-color: inherit;
-        border-right-color: inherit;
-        border-top-color: inherit;
-        border-bottom-color: inherit;
-    }
+.db-link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #050510;
+  border: 1px solid var(--db-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
 }
+.db-link-row input { background: transparent; border: 0; outline: none; flex: 1; color: var(--db-text); font: inherit; }
+
+.db-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border-radius: 10px;
+  background: var(--db-accent); color: #001020; border: none;
+  font-weight: 600; font-size: 13px;
+  cursor: pointer; transition: transform .15s, box-shadow .15s, background .15s;
+}
+.db-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,170,255,0.3); }
+.db-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+.db-btn-ghost {
+  background: transparent; color: var(--db-text);
+  border: 1px solid var(--db-border);
+}
+.db-btn-ghost:hover { background: rgba(255,255,255,0.04); box-shadow: none; transform: none; }
+.db-btn-danger { background: var(--db-danger); color: #fff; }
+
+.db-input {
+  width: 100%;
+  background: #050510;
+  border: 1px solid var(--db-border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: var(--db-text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  outline: none;
+}
+.db-input:focus { border-color: var(--db-accent); box-shadow: 0 0 0 3px rgba(0,170,255,0.12); }
+
+.db-toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--db-border);
+  background: rgba(255,255,255,0.015);
+  transition: border-color .15s, background .15s;
+}
+.db-toggle-row:hover { border-color: rgba(0,170,255,0.3); }
+.db-toggle-row.checked { border-color: rgba(0,170,255,0.5); background: rgba(0,170,255,0.05); }
+
+.db-tabular-num { font-variant-numeric: tabular-nums; }
+
+::selection { background: rgba(0,170,255,0.35); color: white; }
+
+.fade-in { animation: fadeIn .35s ease both; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }

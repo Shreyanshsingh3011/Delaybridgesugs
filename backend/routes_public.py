@@ -164,6 +164,48 @@ async def get_dependencies(token: str):
     return analysis.get("dependency_chains") or {}
 
 
+# -------- Composable export --------
+EXPORT_FIELDS = [
+    "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",
+    "top_delay_reasons", "correlation_matrix", "dependency_chains",
+    "person_ranking", "department_ranking", "timeline_correlation",
+    "tat_performance", "variance", "flags", "sheets", "primary_label",
+    "session_id", "public_token", "created_at",
+]
+
+
+@router.get("/{token}/export")
+async def export_filtered(token: str, fields: Optional[str] = None):
+    """Return a slice of the analysis JSON containing only the requested fields.
+    `fields` is a comma-separated list. If omitted, returns all standard fields.
+    """
+    from server import db
+    sess = await _get_by_token(db, token)
+    analysis = _ensure_analysis(sess)
+    full = _strip_for_public(analysis)
+    full["session_id"] = sess["id"]
+    full["is_demo"] = sess.get("is_demo", False)
+    full["mode_badge"] = "Variance Analysis Enabled" if full.get("mode") == "multi-sheet" else "Single Sheet Mode — Delay Analysis Active"
+
+    if not fields:
+        return full
+    requested = [f.strip() for f in fields.split(",") if f.strip()]
+    out: Dict[str, Any] = {
+        "session_id": full.get("session_id"),
+        "public_token": full.get("public_token"),
+        "created_at": full.get("created_at"),
+        "mode": full.get("mode"),
+        "mode_badge": full.get("mode_badge"),
+        "is_demo": full.get("is_demo"),
+    }
+    for f in requested:
+        if f in full:
+            out[f] = full[f]
+    out["_fields_returned"] = [f for f in requested if f in full]
+    out["_fields_unknown"] = [f for f in requested if f not in full]
+    return out
+
+
 @router.get("/{token}/downstream/{email}")
 async def get_downstream(token: str, email: str):
     from server import db

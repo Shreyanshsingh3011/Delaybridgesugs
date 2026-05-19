@@ -1,0 +1,43 @@
+{
+  "summary": "Phase 1B end-to-end testing for DelayBridge: 9 NEW backend tests for /export + /export-config endpoints (all passed) and 44 regression tests from iter1 (all passed) = 53/53 backend pass. Frontend Playwright covered: login pre-filled inputs + JWT token persisted to localStorage('db_token'), builder shell with header/session-dropdown/step-indicator/logout, /load-demo creating Sheet A and B (79 rows / 13 cols / 2 sheets, variance enabled), invalid Apps Script URL rejection (Sheet C never created), configure step + Run analysis (summary card renders), 5 field toggles wired, save-fields POST persists, next-to-export gating on analysis, composed URL = '/api/public/<token>/export?fields=...', 8 slice URL rows (full,flags,variances,correlations,dependencies,status,alerts,chat-suggestions) each carrying the project public_token, Live preview tab fetches and renders JSON containing the requested fields, Code snippets tab shows Lovable fetch / UrlFetchApp / curl all containing the composed URL with token, session dropdown shows 'New project', logout clears db_token + redirects to /login. Direct curl against /export?fields=totals,risk_score,flags,variance,dependency_chains returns valid JSON with totals.rows=79, risk_score=100, flags(58), _fields_returned echo and _fields_unknown empty — Lovable/external software can consume it as-is.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Builder · Export step", "issues": ["data-testid for the Slice URLs tab is 'export-tab-link' (key='link') but the visible label is 'Slice URLs'. The review request and product copy says 'Slice URLs' — recommend renaming the tab key to 'slices' so data-testid becomes 'export-tab-slices' for consistency with documentation and easier test selectors. Other two tabs ('preview' / 'snippets') already match their labels."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_export_endpoints.py",
+    "/app/backend/tests/test_delaybridge_backend.py",
+    "/app/test_reports/pytest/iter2_export.xml",
+    "/app/test_reports/pytest/iter2_regression.xml"
+  ],
+  "action_items": [
+    "Optional: rename ExportPanel tab key 'link' -> 'slices' so data-testid becomes export-tab-slices (cosmetic / test ergonomics).",
+    "Optional: surface 'Copied' state with a clearer toast/checkmark on the slice copy buttons (currently the icon flips for ~1s; works but easy to miss in tests).",
+    "Iter1 carry-over follow-ups (already fixed and verified now): /api/public/{token}/alerts and /chat/history now return 404 on bogus tokens and alerts are scoped to token — regression suite passes."
+  ],
+  "critical_code_review_comments": [
+    "routes_public.export_filtered correctly delegates to _get_by_token() so 404 on bad token is intact, and EXPORT_FIELDS gates allowed keys — good. Consider whether 'primary_rows' should ever be exposable; currently it's stripped via _strip_for_public so cannot leak — fine.",
+    "routes_admin ExportConfig accepts arbitrary string list with no whitelist; if the intent is to constrain to EXPORT_FIELDS, add a pydantic validator to reject unknown keys (currently unknown keys round-trip back via /export as _fields_unknown — acceptable, but could surprise admins).",
+    "ExportPanel composedUrl always rebuilds from the current selected toggles, but the SLICE_ENDPOINTS URLs intentionally do NOT carry ?fields — that mismatch is by design (slices map to dedicated endpoints) and should be documented in tooltips so users know the difference.",
+    "Builder uses localStorage('db_token') for auth header AND the backend also sets httpOnly cookies — there is technically a dual-auth surface. Either model works, but document which one is canonical to avoid future drift."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_export_endpoints.py (new)",
+    "/app/test_reports/pytest/iter2_export.xml (generated)",
+    "/app/test_reports/pytest/iter2_regression.xml (generated)"
+  ],
+  "success_rate": {"backend": "100% (53/53)", "frontend": "100% (all critical flows verified)"},
+  "test_credentials": "admin@delaybridge.io / DelayBridge#2026 (works); demo public token: demo-nit76-operations (works); EMERGENT_LLM_KEY active (chat tested in regression).",
+  "seed_data_creation": "Created and deleted a session named 'TEST_export_config' for the export-config admin tests. UI test left one project 'Smoke' in admin account (auto-created on first login per spec). Demo session for token demo-nit76-operations is auto-seeded by first GET on /api/public/demo-nit76-operations.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite at /app/backend/tests/test_delaybridge_backend.py + new /app/backend/tests/test_export_endpoints.py. Run with `pytest /app/backend/tests/ -v`. ExportPanel tab keys are: 'link' (Slice URLs), 'preview' (Live preview), 'snippets' (Code snippets). The composed export URL uses dynamic fields from the user's toggle selection. Toggling already-selected fields will DESELECT them — Configure panel default-selects 'totals' + 'risk_score' on first analysis, so a fresh test should explicitly toggle to the desired set rather than assuming an empty initial state.",
+  "rca_of_the_issue": "N/A — no defects found in this iteration. Phase 1B export feature works end-to-end across backend (composable JSON via fields=, persisted export-config, 404 on bad token) and frontend (composed URL, 8 slice URLs, Live preview JSON renders, three code snippets with URL embedded). External consumers (Lovable / Apps Script / curl) can fetch the single composed URL and receive the analysis JSON shaped to selected fields, which is the headline deliverable of the request."
+}
