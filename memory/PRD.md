@@ -73,3 +73,16 @@ One Google Sheet connected via Apps Script Web App URL is the single source of t
 1. Validate via `testing_agent_v3` (backend only)
 2. Wire Lovable frontend to public API
 3. Phase 2: Twilio + SendGrid + PDF/Excel reports + APScheduler
+
+---
+
+## Phase 1B update — 2026-02 (Frontend + Export Composer)
+- ✅ Login page (JWT bearer stored as `db_token`)
+- ✅ Builder shell — header, project picker, step indicator, logout
+- ✅ **Step 1 — Connect Sheets**: paste up to 5 Apps Script URLs (labels A–E), refresh/remove, detected-mapping chips, data-quality stats, preview rows, setup guide with code copy, "Load demo data"
+- ✅ **Step 2 — Configure Export**: 4 grouped field-toggle cards (Overview / Delay analysis / Variance / Flags), Run analysis, persisted export-config
+- ✅ **Step 3 — Get Link**: composed URL `${BACKEND}/api/public/{token}/export?fields=...` + 8 slice URLs + Live preview tab + Code snippets (Lovable / Apps Script / cURL)
+- ✅ New backend endpoints:
+  - `GET /api/public/{token}/export?fields=` — composable JSON
+  - `GET/POST /api/sessions/{id}/export-config` — persist field selection
+- ✅ Testing: 53/53 backend tests pass, all frontend flows verified
