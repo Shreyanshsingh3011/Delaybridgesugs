@@ -389,6 +389,7 @@ async def chat(token: str, payload: ChatRequest):
                 "dependent_activity": b.get("your_activity"),
                 "status": "MOCKED — alerts disabled (no Twilio/SendGrid credentials configured)",
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "token": token,
             }
             auto_actions.append(mock)
             await db.alert_log.insert_one(dict(mock))
@@ -413,6 +414,7 @@ async def chat(token: str, payload: ChatRequest):
 @router.get("/{token}/chat/history")
 async def chat_history(token: str, chat_session_id: Optional[str] = None, limit: int = 50):
     from server import db
+    await _get_by_token(db, token)
     query = {"token": token}
     if chat_session_id:
         query["session_id"] = chat_session_id
@@ -427,7 +429,8 @@ async def chat_history(token: str, chat_session_id: Optional[str] = None, limit:
 @router.get("/{token}/alerts")
 async def get_alerts(token: str, limit: int = 100):
     from server import db
-    cur = db.alert_log.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)
+    await _get_by_token(db, token)
+    cur = db.alert_log.find({"token": token}, {"_id": 0}).sort("created_at", -1).limit(limit)
     items = []
     async for it in cur:
         items.append(it)
