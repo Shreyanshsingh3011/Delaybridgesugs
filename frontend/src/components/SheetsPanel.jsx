@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { api, formatErr } from "../api";
 import {
   RefreshCw, Plus, Trash2, Copy, ChevronRight, Check, X,
-  HelpCircle, Database, ChevronDown, Loader2, ListPlus,
+  HelpCircle, Database, ChevronDown, Loader2,
 } from "lucide-react";
 
 const APPS_SCRIPT_CODE = `function doGet(e) {
@@ -26,71 +26,39 @@ const LABEL_ORDER = ["A", "B", "C", "D", "E"];
 export default function SheetsPanel({ sessionMeta, reload, onNext }) {
   const sessionId = sessionMeta.id;
   const sheets = sessionMeta.sheets || [];
-  const usedLabels = new Set(sheets.map((s) => s.label));
-  const freeLabels = LABEL_ORDER.filter((l) => !usedLabels.has(l));
-
-  const [bulkText, setBulkText] = useState("");
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [lineStates, setLineStates] = useState({}); // {idx: 'pending'|'ok'|err}
+  const sheetsByLabel = Object.fromEntries(sheets.map((s) => [s.label, s]));
   const [showGuide, setShowGuide] = useState(false);
 
-  const connectOne = async (url) => {
-    return api.post(`/sessions/${sessionId}/sheets`, { url: url.trim() });
-  };
+  // Track which empty slots are revealed (visible as an input card).
+  // Sheet A is always visible. B-E become visible when user clicks "+ Add Sheet X"
+  // OR automatically when the prior slot is filled.
+  const [revealed, setRevealed] = useState(() => new Set(["A"]));
 
-  const onBulkConnect = async () => {
-    const lines = bulkText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    if (!lines.length) {
-      toast.error("Paste one or more Apps Script URLs first.");
-      return;
-    }
-    if (lines.length > freeLabels.length) {
-      toast.error(`You can connect at most ${freeLabels.length} more sheet(s) in this project.`);
-      return;
-    }
-    setBulkBusy(true);
-    const fresh = {};
-    lines.forEach((_, i) => { fresh[i] = "pending"; });
-    setLineStates(fresh);
-
-    // Connect sequentially so the backend assigns labels A, B, C…
-    let okCount = 0;
-    const errors = [];
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        await connectOne(lines[i]);
-        setLineStates((s) => ({ ...s, [i]: "ok" }));
-        okCount++;
-      } catch (e) {
-        const msg = formatErr(e.response?.data?.detail) || e.message;
-        setLineStates((s) => ({ ...s, [i]: msg }));
-        errors.push(`Line ${i + 1}: ${msg}`);
+  // Auto-reveal next empty slot when prior slot becomes connected
+  useEffect(() => {
+    const next = new Set(revealed);
+    for (let i = 0; i < LABEL_ORDER.length; i++) {
+      const L = LABEL_ORDER[i];
+      if (sheetsByLabel[L]) next.add(L);  // safe to keep
+      // If the previous label is connected and current is empty, reveal current
+      if (i > 0) {
+        const prev = LABEL_ORDER[i - 1];
+        if (sheetsByLabel[prev] && !sheetsByLabel[L]) {
+          next.add(L);
+        }
       }
     }
-    setBulkBusy(false);
-    if (okCount > 0) {
-      toast.success(`Connected ${okCount} sheet(s)`);
-      // Keep only failed lines in the textarea so user can fix them
-      const failedLines = lines.filter((_, i) => lineStates[i] !== "ok" && fresh[i] !== "ok");
-      // After loop, look at the local results map we built
-      const remaining = [];
-      lines.forEach((l, i) => {
-        // anything other than "ok" stays
-        // we rebuilt states inside loop; can't access easily — use closure variable
-      });
-      setBulkText(errors.length ? errors.map(() => "").join("\n") && lines.filter((_, i) => false).join("\n") : "");
-      // Simpler: just clear if all ok, keep all if any failure
-      if (errors.length === 0) {
-        setBulkText("");
-        setLineStates({});
-      }
+    if (next.size !== revealed.size) setRevealed(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheets.length]);
+
+  const refreshSheet = async (label) => {
+    try {
+      const { data } = await api.post(`/sessions/${sessionId}/sheets/${label}/refresh`);
+      toast.success(`Sheet ${label} refreshed · ${data.rows} rows`);
       await reload();
-    }
-    if (errors.length) {
-      errors.forEach((e) => toast.error(e));
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || e.message);
     }
   };
 
@@ -105,14 +73,8 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
     }
   };
 
-  const refreshSheet = async (label) => {
-    try {
-      const { data } = await api.post(`/sessions/${sessionId}/sheets/${label}/refresh`);
-      toast.success(`Sheet ${label} refreshed · ${data.rows} rows`);
-      await reload();
-    } catch (e) {
-      toast.error(formatErr(e.response?.data?.detail) || e.message);
-    }
+  const connectSheet = async (label, url) => {
+    return api.post(`/sessions/${sessionId}/sheets`, { url: url.trim() });
   };
 
   const copyCode = async () => {
@@ -120,7 +82,8 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
     toast.success("Apps Script code copied");
   };
 
-  const lines = bulkText.split(/\r?\n/);
+  const nextEmptyLabel = LABEL_ORDER.find((L) => !sheetsByLabel[L] && !revealed.has(L));
+  const totalConnected = sheets.length;
 
   return (
     <div className="space-y-6" data-testid="sheets-panel">
@@ -129,118 +92,86 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Connect your sheets</h2>
           <p className="text-sm mt-1" style={{ color: "var(--db-muted)" }}>
-            Paste up to 5 Google Apps Script Web App URLs — one per line. Add 2 or more to activate variance analysis.
+            Paste a Google Apps Script Web App URL into each sheet slot. Add 2 or more to activate variance analysis.
           </p>
         </div>
         <button data-testid="toggle-guide-button" onClick={() => setShowGuide((s) => !s)}
                 className="db-btn db-btn-ghost">
           <HelpCircle className="w-4 h-4" />
-          {showGuide ? "Hide" : "How do I get an Apps Script URL?"}
+          {showGuide ? "Hide guide" : "How do I get an Apps Script URL?"}
         </button>
       </div>
 
-      {/* Connected sheets — compact summary first */}
-      {sheets.length > 0 && (
-        <div className="space-y-3" data-testid="connected-sheets-list">
-          <div className="text-[11px] mono uppercase tracking-wider"
-               style={{ color: "var(--db-muted)" }}>
-            connected · {sheets.length} of 5
-          </div>
-          {sheets.map((s) => (
-            <ConnectedSheetCard key={s.label} s={s}
-                                onRefresh={() => refreshSheet(s.label)}
-                                onRemove={() => removeSheet(s.label)} />
+      {/* Counter */}
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] mono uppercase tracking-wider"
+              style={{ color: "var(--db-muted)" }}>
+          {totalConnected} of 5 connected
+        </span>
+        <div className="flex gap-1.5">
+          {LABEL_ORDER.map((L) => (
+            <span key={L} className={`db-chip ${sheetsByLabel[L] ? `db-chip-${COLOR_MAP[L]}` : "db-chip-grey"}`}>
+              {sheetsByLabel[L] ? <Check className="w-3 h-3" /> : null}
+              {L}
+            </span>
           ))}
         </div>
-      )}
+      </div>
 
-      {/* Bulk-add — primary input */}
-      {freeLabels.length > 0 && (
-        <div className="db-card p-5" data-testid="bulk-add-card">
-          <div className="flex items-center gap-3 mb-3 flex-wrap">
-            <ListPlus className="w-4 h-4 db-accent" />
-            <div className="text-sm font-semibold">
-              {sheets.length === 0 ? "Add your first sheets" : `Add up to ${freeLabels.length} more`}
-            </div>
-            <div className="flex gap-1.5">
-              {freeLabels.map((l) => (
-                <span key={l} className={`db-chip db-chip-${COLOR_MAP[l]}`}>{l}</span>
-              ))}
-            </div>
-            <div className="flex-1"></div>
-            <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
-              one URL per line
-            </div>
-          </div>
-          <textarea
-            data-testid="bulk-url-textarea"
-            placeholder={"https://script.google.com/macros/s/AKfycb-AAAA/exec\nhttps://script.google.com/macros/s/AKfycb-BBBB/exec\nhttps://script.google.com/macros/s/AKfycb-CCCC/exec"}
-            className="db-input min-h-[140px] font-mono"
-            style={{ fontFamily: "IBM Plex Mono, monospace", resize: "vertical" }}
-            value={bulkText}
-            onChange={(e) => setBulkText(e.target.value)}
-          />
+      {/* Per-slot cards */}
+      <div className="space-y-4">
+        {LABEL_ORDER.map((L, i) => {
+          const sheet = sheetsByLabel[L];
+          if (sheet) {
+            return (
+              <ConnectedSheetCard
+                key={L}
+                s={sheet}
+                onRefresh={() => refreshSheet(L)}
+                onRemove={() => removeSheet(L)}
+              />
+            );
+          }
+          if (revealed.has(L)) {
+            return (
+              <SlotInputCard
+                key={L}
+                label={L}
+                primary={L === "A"}
+                onConnect={async (url) => {
+                  await connectSheet(L, url);
+                  await reload();
+                }}
+                onCancel={L === "A" ? null : () => {
+                  const next = new Set(revealed);
+                  next.delete(L);
+                  setRevealed(next);
+                }}
+              />
+            );
+          }
+          return null;
+        })}
 
-          {/* Per-line status */}
-          {Object.keys(lineStates).length > 0 && (
-            <div className="mt-3 space-y-1">
-              {lines.filter((l) => l.trim()).map((line, i) => {
-                const st = lineStates[i];
-                return (
-                  <div key={i} className="flex items-center gap-2 text-[11px] mono">
-                    {st === "pending" && <Loader2 className="w-3 h-3 animate-spin db-accent" />}
-                    {st === "ok" && <Check className="w-3 h-3 db-success" />}
-                    {st && st !== "pending" && st !== "ok" && <X className="w-3 h-3 db-danger" />}
-                    <span className="truncate max-w-[400px]" style={{ color: "var(--db-muted)" }}>
-                      {line.slice(0, 80)}{line.length > 80 ? "…" : ""}
-                    </span>
-                    {st && st !== "pending" && st !== "ok" && (
-                      <span className="db-danger">— {st}</span>
-                    )}
-                  </div>
-                );
-              })}
+        {/* "+ Add Sheet X" button when there is an unrevealed slot */}
+        {nextEmptyLabel && (
+          <button
+            data-testid={`reveal-sheet-${nextEmptyLabel}`}
+            onClick={() => setRevealed(new Set([...revealed, nextEmptyLabel]))}
+            className="w-full db-card p-4 text-left transition hover:bg-white/[0.02]"
+            style={{ borderStyle: "dashed" }}
+          >
+            <div className="flex items-center gap-3">
+              <Plus className="w-4 h-4 db-accent" />
+              <span className={`db-chip db-chip-${COLOR_MAP[nextEmptyLabel]}`}>Sheet {nextEmptyLabel}</span>
+              <span className="text-sm font-medium">Add another sheet</span>
+              <span className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
+                optional · {nextEmptyLabel === "B" ? "activates variance analysis" : "extends variance"}
+              </span>
             </div>
-          )}
-
-          <div className="flex items-center gap-3 mt-4 flex-wrap">
-            <button
-              data-testid="bulk-connect-button"
-              onClick={onBulkConnect}
-              disabled={bulkBusy || !bulkText.trim()}
-              className="db-btn"
-            >
-              {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              {bulkBusy
-                ? "Connecting…"
-                : `Connect ${
-                    bulkText.split(/\r?\n/).filter((l) => l.trim()).length || ""
-                  } sheet${
-                    bulkText.split(/\r?\n/).filter((l) => l.trim()).length === 1 ? "" : "s"
-                  }`}
-            </button>
-            <button
-              data-testid="clear-bulk-button"
-              onClick={() => { setBulkText(""); setLineStates({}); }}
-              disabled={bulkBusy || !bulkText.trim()}
-              className="db-btn db-btn-ghost"
-            >
-              Clear
-            </button>
-          </div>
-          <div className="text-[11px] mono mt-3" style={{ color: "var(--db-muted)" }}>
-            Tip: each URL is a separately deployed Google Sheet. The first connected URL becomes Sheet A.
-          </div>
-        </div>
-      )}
-
-      {freeLabels.length === 0 && (
-        <div className="db-card p-5" data-testid="max-sheets-notice">
-          <div className="text-sm" style={{ color: "var(--db-muted)" }}>
-            All 5 sheet slots used. Remove one to add a new URL.
-          </div>
-        </div>
-      )}
+          </button>
+        )}
+      </div>
 
       {/* Setup guide — collapsed by default */}
       {showGuide && (
@@ -260,7 +191,7 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
             <li>4 — Click <span className="mono db-accent">Deploy → New Deployment</span></li>
             <li>5 — Type: <span className="mono">Web App</span> · Execute as: <span className="mono">Me</span> · Who has access: <span className="mono">Anyone</span></li>
             <li>6 — Click <span className="mono db-accent">Deploy</span> → copy the Web App URL</li>
-            <li>7 — Paste the URL into the box above</li>
+            <li>7 — Paste it into the Sheet slot above</li>
           </ol>
           <div className="relative">
             <pre className="db-code">{APPS_SCRIPT_CODE}</pre>
@@ -275,17 +206,73 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
       {/* Next */}
       <div className="flex items-center justify-between gap-4 pt-2">
         <div className="flex items-center gap-2">
-          {sheets.length >= 2 ? (
-            <span className="db-chip db-chip-green"><Check className="w-3 h-3" /> Variance enabled · {sheets.length} sheets</span>
-          ) : sheets.length === 1 ? (
-            <span className="db-chip db-chip-blue">Single sheet mode</span>
+          {totalConnected >= 2 ? (
+            <span className="db-chip db-chip-green"><Check className="w-3 h-3" /> Variance enabled · {totalConnected} sheets</span>
+          ) : totalConnected === 1 ? (
+            <span className="db-chip db-chip-blue">Single sheet mode · add Sheet B for variance</span>
           ) : (
             <span className="db-chip db-chip-grey"><X className="w-3 h-3" /> No sheets connected</span>
           )}
         </div>
-        <button data-testid="next-to-configure-button" disabled={sheets.length === 0}
+        <button data-testid="next-to-configure-button" disabled={totalConnected === 0}
                 onClick={onNext} className="db-btn">
           Configure export <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SlotInputCard({ label, primary, onConnect, onCancel }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!url.trim()) {
+      toast.error("Paste an Apps Script Web App URL first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onConnect(url);
+      setUrl("");
+      toast.success(`Sheet ${label} connected`);
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || e.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="db-card p-5" data-testid={`slot-card-${label}`}>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <span className={`db-chip db-chip-${COLOR_MAP[label]}`}>Sheet {label}</span>
+        <span className="text-sm font-semibold">
+          {primary ? "Primary sheet" : `Additional sheet ${label}`}
+        </span>
+        <span className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
+          {primary ? "required" : (label === "B" ? "activates variance" : "extends variance")}
+        </span>
+        <div className="flex-1"></div>
+        {onCancel && (
+          <button onClick={onCancel} data-testid={`cancel-slot-${label}`}
+                  className="db-btn db-btn-ghost py-1 px-2 text-xs">
+            <X className="w-3.5 h-3.5" /> Cancel
+          </button>
+        )}
+      </div>
+      <div className="flex gap-3 flex-wrap">
+        <input
+          data-testid={`url-input-${label}`}
+          placeholder="https://script.google.com/macros/s/AKfycb…/exec"
+          className="db-input flex-1 min-w-[260px]"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          disabled={busy}
+        />
+        <button data-testid={`connect-${label}-button`} onClick={submit}
+                disabled={busy || !url.trim()} className="db-btn">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          {busy ? "Connecting…" : "Connect"}
         </button>
       </div>
     </div>
@@ -320,7 +307,6 @@ function ConnectedSheetCard({ s, onRefresh, onRemove }) {
         </button>
       </div>
 
-      {/* URL line — always visible but small */}
       <div className="mt-2 text-[11px] mono break-all" style={{ color: "var(--db-muted)" }}>
         {s.url}
       </div>
