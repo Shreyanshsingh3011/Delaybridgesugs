@@ -1,0 +1,51 @@
+{
+  "summary": "Backend-only e2e pytest for DelayBridge. 42/44 tests passed (95.5%). Verified: JWT login (cookies + bearer), /auth/me, full public demo analysis (79 rows, mode=multi-sheet, risk_score, variance.summary, dependency_chains.critical_path), flags + severity/status filters, variance summary with compared_sheets=2 sorted desc, correlations (matrix + person/dept/timeline + top reasons), dependencies, downstream for deepak.verma (blocked entries with blocking_activity/blocker_person/reason), onboarding (7 steps + apps_script_code), status (sheets A,B connected), refresh demo no-op, flag ack→resolve, admin chat citing real demo names via real Anthropic Claude (Emergent key), dependent chat addressing Deepak with MOCKED dependent_pressure_loop auto_actions and alert_log inserts, chat suggestions admin+dependent, chat history, alerts list, admin session CRUD + load-demo running analysis + public reachable via returned public_token, invalid sheet URL returns 400, deleted session returns 404, bad-token 404 across 7/9 public endpoints, no MongoDB _id leak across 6 sampled endpoints.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/public/{token}/alerts",
+        "issue": "Endpoint does NOT validate the public token AND queries db.alert_log with empty filter {} — any caller (including with a totally invalid token) gets the global alert_log dump across ALL sessions/tenants. This is both a token-validation bug and a cross-tenant data leak. Should call _get_by_token(token) first AND filter by token (e.g., add `token` field when inserting in chat route and query {'token': token}).",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "GET /api/public/{token}/chat/history",
+        "issue": "No token validation — unknown/invalid tokens return 200 with empty history instead of 404. Add `await _get_by_token(db, token)` at top of chat_history to mirror other public routes.",
+        "priority": "MEDIUM"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_delaybridge_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Add `await _get_by_token(db, token)` (or equivalent existence check) at the start of GET /api/public/{token}/alerts and GET /api/public/{token}/chat/history so invalid tokens return 404.",
+    "Scope alerts by token: when inserting into db.alert_log in routes_public.chat(), include `\"token\": token` in the doc; in /alerts query, filter by {'token': token}. This prevents cross-tenant data leak (currently every token sees all alerts globally).",
+    "Consider rate-limiting /api/auth/login + adding brute-force lockout after N failed attempts (not currently implemented in auth.py; the playbook testing hint mentioned 5-fail lockout — absent here, optional for Phase 1)."
+  ],
+  "critical_code_review_comments": [
+    "routes_public.get_alerts has no token scoping — both a 404 omission and a multi-tenant data leak. Must be fixed before public release.",
+    "routes_public.chat_history queries by token field which is fine for scoping, but it still returns 200 for invalid tokens (silently empty). Should 404 to match other routes.",
+    "server.py CORS uses CORS_ORIGINS='*' with allow_credentials=True. Combination of '*' origin + credentials is rejected by browsers and is also a security smell; tighten to explicit origins (FRONTEND_URL) before production.",
+    "auth.py login does not implement brute-force lockout. For an admin-only phase-1 backend this is acceptable but worth adding before opening up.",
+    "routes_admin.add_sheet pushes a sheet record with connected=false before raising HTTPException(400) when fetch fails — this means failed connections still get persisted into the sheets array. Consider not pushing on failure (or pushing only the meta with connected=false explicitly intended). Currently consistent with status_msg semantics, just flagging.",
+    "analysis primary_rows is persisted inside the analysis document — for very large sheets this could bloat the sessions collection. Consider storing primary_rows in a separate collection keyed by session_id."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_delaybridge_backend.py (new)",
+    "/app/test_reports/pytest/pytest_results.xml (generated)"
+  ],
+  "success_rate": {"backend": "95.5% (42/44)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "admin@delaybridge.io / DelayBridge#2026 (worked); demo token demo-nit76-operations (worked); EMERGENT_LLM_KEY active — Claude returned real-data-grounded replies citing names like Deepak Verma.",
+  "seed_data_creation": "Tests created and then deleted a session named 'TEST_pytest_session'. The demo session demo-nit76-operations is auto-seeded by _ensure_demo_session on first access — no manual seeding required. Each chat dependent-mode test inserts pressure-loop entries into alert_log; these accumulate.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Use /app/backend/tests/test_delaybridge_backend.py as regression. BASE_URL pulled from REACT_APP_BACKEND_URL. Demo data is auto-seeded by first GET on /api/public/demo-nit76-operations. The 2 failing tests assert correct 404 on bad tokens for /alerts and /chat/history — these will pass once the main agent adds token validation. After fix, also verify /alerts only returns alerts for the requesting token (cross-tenant leak).",
+  "rca_of_the_issue": "1) /alerts: handler `get_alerts(token, limit)` ignores `token` and queries db.alert_log with empty filter, never calling _get_by_token. Root cause: missing both auth-token lookup and scoping filter. Repro: curl $URL/api/public/bogus/alerts → 200 with the global alert list. Mitigation: add `await _get_by_token(db, token)` for 404 behaviour and add a `token` field at alert insertion in routes_public.chat (line ~382) then query db.alert_log with {'token': token}. 2) /chat/history: handler queries by token field but lacks an explicit existence check so unknown tokens silently return empty 200. Mitigation: add `await _get_by_token(db, token)` at top of chat_history."
+}
