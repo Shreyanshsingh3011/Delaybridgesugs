@@ -2,7 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api, formatErr } from "../api";
 import {
-  RefreshCw, Plus, Trash2, Copy, ChevronRight, Check, X, Sparkles,
+  RefreshCw, Plus, Trash2, Copy, ChevronRight, Check, X,
   HelpCircle, Database,
 } from "lucide-react";
 
@@ -67,17 +67,6 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
     }
   };
 
-  const loadDemo = async () => {
-    setBusy(true);
-    try {
-      await api.post(`/sessions/${sessionId}/load-demo`);
-      toast.success("Demo data loaded — 2 snapshots, 79 rows each");
-      await reload();
-    } catch (e) {
-      toast.error(formatErr(e.response?.data?.detail) || e.message);
-    } finally { setBusy(false); }
-  };
-
   const copyCode = async () => {
     await navigator.clipboard.writeText(APPS_SCRIPT_CODE);
     toast.success("Apps Script code copied");
@@ -98,10 +87,6 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
           <button data-testid="toggle-guide-button" onClick={() => setShowGuide((s) => !s)}
                   className="db-btn db-btn-ghost">
             <HelpCircle className="w-4 h-4" /> {showGuide ? "Hide" : "Show"} setup guide
-          </button>
-          <button data-testid="load-demo-button" onClick={loadDemo} disabled={busy}
-                  className="db-btn db-btn-ghost">
-            <Sparkles className="w-4 h-4" /> Load demo data
           </button>
         </div>
       </div>
@@ -258,8 +243,8 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
 
       {sheets.length === 0 && (
         <div className="db-card p-10 text-center" data-testid="empty-sheets-hint">
-          <div className="text-sm mono mb-3" style={{ color: "var(--db-muted)" }}>
-            No sheets yet — paste an Apps Script URL above or click <span className="db-accent">Load demo data</span> to explore the system.
+          <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>
+            No sheets yet — paste a Google Apps Script Web App URL above to connect your first sheet.
           </div>
         </div>
       )}

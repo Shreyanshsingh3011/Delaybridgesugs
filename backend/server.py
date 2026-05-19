@@ -60,7 +60,6 @@ async def root():
                 "/api/public/{token}/chat/history",
             ],
         },
-        "demo_token": os.environ.get("DEMO_TOKEN", "demo-nit76-operations"),
     }
 
 
@@ -97,7 +96,7 @@ async def on_startup():
     except Exception as e:
         logger.warning("Index creation issue: %s", e)
     await seed_admin(db)
-    logger.info("DelayBridge ready. Demo token: %s", os.environ.get("DEMO_TOKEN"))
+    logger.info("DelayBridge ready.")
 
 
 @app.on_event("shutdown")

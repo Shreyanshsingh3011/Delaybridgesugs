@@ -20,8 +20,7 @@ from chatbot import (
 )
 from sheet_fetcher import fetch_apps_script
 from normalizer import normalize_rows
-from demo_data import get_demo_rows, get_demo_rows_variant_b
-from routes_admin import _run_and_persist_analysis, _build_sheet_record
+from routes_admin import _run_and_persist_analysis
 
 
 logger = logging.getLogger(__name__)
@@ -44,45 +43,9 @@ APPS_SCRIPT_SAMPLE = """function doGet(e) {
 
 
 async def _get_by_token(db, token: str) -> Dict[str, Any]:
-    # Demo token: ensure a demo session exists for anyone
-    if token == os.environ.get("DEMO_TOKEN", "demo-nit76-operations"):
-        sess = await db.sessions.find_one({"public_token": token}, {"_id": 0})
-        if not sess:
-            sess = await _ensure_demo_session(db, token)
-        return sess
     sess = await db.sessions.find_one({"public_token": token}, {"_id": 0})
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found for token.")
-    return sess
-
-
-async def _ensure_demo_session(db, token: str) -> Dict[str, Any]:
-    """Create a public demo session on first access if missing."""
-    sid = str(uuid.uuid4())
-    rows_a = get_demo_rows()
-    rows_b = get_demo_rows_variant_b()
-    sheets: List[Dict[str, Any]] = []
-    for label, rows in [("A", rows_a), ("B", rows_b)]:
-        rec = _build_sheet_record(label, f"demo://nit76-{label}", f"NIT-76 Snapshot {label}", rows, f"Demo data ({len(rows)} rows).", True)
-        from normalizer import data_quality as _dq
-        normalized = normalize_rows(rows, rec["mapping"])
-        rec["data_quality"] = _dq(rows, normalized)
-        sheets.append(rec)
-    doc = {
-        "id": sid,
-        "owner_id": "system-demo",
-        "name": "Demo Data — NIT-76 Operations",
-        "public_token": token,
-        "sheets": sheets,
-        "analysis": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "is_demo": True,
-    }
-    await db.sessions.insert_one(doc)
-    doc.pop("_id", None)
-    await _run_and_persist_analysis(db, doc, sheets)
-    sess = await db.sessions.find_one({"public_token": token}, {"_id": 0})
     return sess
 
 
@@ -108,7 +71,6 @@ async def get_full_analysis(token: str):
     analysis = _ensure_analysis(sess)
     out = _strip_for_public(analysis)
     out["session_id"] = sess["id"]
-    out["is_demo"] = sess.get("is_demo", False)
     out["mode_badge"] = "Variance Analysis Enabled" if out.get("mode") == "multi-sheet" else "Single Sheet Mode — Delay Analysis Active"
     return out
 
@@ -184,7 +146,6 @@ async def export_filtered(token: str, fields: Optional[str] = None):
     analysis = _ensure_analysis(sess)
     full = _strip_for_public(analysis)
     full["session_id"] = sess["id"]
-    full["is_demo"] = sess.get("is_demo", False)
     full["mode_badge"] = "Variance Analysis Enabled" if full.get("mode") == "multi-sheet" else "Single Sheet Mode — Delay Analysis Active"
 
     if not fields:
@@ -196,7 +157,6 @@ async def export_filtered(token: str, fields: Optional[str] = None):
         "created_at": full.get("created_at"),
         "mode": full.get("mode"),
         "mode_badge": full.get("mode_badge"),
-        "is_demo": full.get("is_demo"),
     }
     for f in requested:
         if f in full:
@@ -239,7 +199,6 @@ async def get_status(token: str):
     return {
         "session_id": sess["id"],
         "name": sess["name"],
-        "is_demo": sess.get("is_demo", False),
         "sheets": [
             {
                 "label": s["label"],
@@ -261,8 +220,6 @@ async def public_refresh(token: str):
     """Re-fetch all sheets and re-analyze. Open endpoint scoped to this token."""
     from server import db
     sess = await _get_by_token(db, token)
-    if sess.get("is_demo"):
-        return {"ok": True, "message": "Demo data is static — refresh is a no-op.", "is_demo": True}
     updated_sheets: List[Dict[str, Any]] = []
     for s in sess.get("sheets", []):
         url = s.get("url")

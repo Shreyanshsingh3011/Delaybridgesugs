@@ -27,7 +27,6 @@ from normalizer import detect_columns, normalize_rows, data_quality
 from analysis import analyze_single_sheet
 from variance import compute_variances, column_similarity
 from flags import generate_flags
-from demo_data import get_demo_rows, get_demo_rows_variant_b
 
 
 router = APIRouter(prefix="/api")
@@ -417,24 +416,3 @@ def _tat_performance(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "label": "Internal TAT Performance — single sheet",
         "prompt": "Add Sheet B to enable true cross-source Variance Analysis",
     }
-
-
-# -------- Demo load --------
-@router.post("/sessions/{sid}/load-demo")
-async def load_demo(sid: str, current=Depends(get_current_user)):
-    from server import db
-    sess = await _get_session(db, sid, current["id"])
-    rows_a = get_demo_rows()
-    rows_b = get_demo_rows_variant_b()
-    sheets: List[Dict[str, Any]] = []
-    for label, rows in [("A", rows_a), ("B", rows_b)]:
-        rec = _build_sheet_record(label, f"demo://nit76-{label}", f"NIT-76 Snapshot {label}", rows, f"Demo data loaded ({len(rows)} rows).", True)
-        normalized = normalize_rows(rows, rec["mapping"])
-        rec["data_quality"] = data_quality(rows, normalized)
-        sheets.append(rec)
-    await db.sessions.update_one(
-        {"id": sid, "owner_id": current["id"]},
-        {"$set": {"sheets": sheets, "updated_at": datetime.now(timezone.utc).isoformat()}},
-    )
-    sess["sheets"] = sheets
-    return await _run_and_persist_analysis(db, sess, sheets)
