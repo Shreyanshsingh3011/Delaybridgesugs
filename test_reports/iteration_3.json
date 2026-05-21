@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 3 — Dependency Mapping Studio E2E. Wrote /app/backend/tests/test_studio_backend.py (16 tests covering auth gating, CRUD, analyze: bad-pattern Frontend→Database / 3-node cycle / orphan, share modes private/public/readonly/editable incl. public PUT, fetch invalid URL, delete). 16/16 PASS. Frontend Playwright e2e from /login → click 'Dependency Studio' button → /studio auto-creates default map and redirects to /studio/{id} → canvas + left sidebar + right inspector all render with correct data-testids. Verified: template 'Frontend → Auth API → Database' inserts 3 nodes + 2 edges; manual Add Database grid button adds node (6→7); node click opens editor and editing name (RenamedNode) updates label live; Save triggers PUT /studio/maps/{id} and toast 'Map saved' shows with dirty→saved; Share → Public generates token and URL; navigating unauthenticated to /studio/share/{token} renders the same map in read-only mode (READ-ONLY badge, 'shared by admin@delaybridge.io · read-only view' banner, no Save / no Share button); inspector shows live Health=100 / Deps=20 / Complex=11 scores plus success insight 'Clean directed-acyclic architecture with 6 nodes and 4 edges' (the DAG ≥4 nodes success case); search input filters visible nodes; dependency analytics panel renders Nodes/Edges/Roots/Sinks/Orphans/Cycles/Bottlenecks/High coupling/Redundant/DAG. Login/logout/Builder regression intact.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/public/demo-nit76-operations*", "issue": "Iter1/Iter2 tests using the demo token now 404 because the demo seed was removed per /app/memory/test_credentials.md ('No demo/seed data — bring your own Apps Script URL.'). This is consistent with the documented spec, not a Studio regression — but the old test_delaybridge_backend.py + test_export_endpoints.py demo-token suites need updating to create their own session via /api/sessions before asserting. 28 such legacy tests fail; all 41 non-demo tests + 16 new Studio tests pass."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TopBar Auto-arrange (LR/TB/Force)", "issue": "Could not confirm positions actually moved via Playwright — `.react-flow__node` style.transform read as 'translate(0px, 0px)' both before and after clicking LR. Visually nodes are positioned, so the selector may be reading the outer pane wrapper rather than the node transform; not necessarily a real bug. Worth a quick visual check by main agent that LR vs TB vs Force produce different layouts.", "selector": "[data-testid='studio-arrange-lr']", "priority": "LOW"},
+      {"component": "TopBar Export dropdown", "issue": "Dropdown uses CSS `group-hover` (Tailwind) to reveal PNG/SVG/JSON buttons. This works in real user hover but is flaky under Playwright `.hover()` because the hover state is released before the click resolves — JSON download did not fire in the test. Consider switching to click-to-open dropdown (controlled state) for testability + better mobile/touch UX.", "selector": "[data-testid='studio-export-button']", "priority": "MEDIUM"},
+      {"component": "SharedMap canvas wrapper", "issue": "Public /studio/share/{token} view does NOT expose data-testid='studio-canvas' on the React Flow wrapper (only the editor route does). For symmetry / share-page automated tests, add the same data-testid (or a 'shared-canvas' equivalent) plus a 'shared-banner' testid on the read-only banner element.", "selector": "[data-testid='studio-canvas']", "priority": "LOW"},
+      {"component": "Studio canvas", "issue": "Console warning '[React Flow]: It looks like you've created a new nodeTypes or edgeTypes object…' — although nodeTypes/edgeTypes ARE declared at module scope in Studio.jsx, React Flow still warns. defaultEdgeOptions is also at module scope so it shouldn't trigger. Minor — wrap in useMemo to silence the warning.", "selector": "n/a", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Studio editor", "issues": ["Looks clean and consistent with DelayBridge dark theme — Health/Deps/Complex scorecards, AI Insights, Dependency Analytics all render with good contrast. No issues."]},
+      {"screen": "Studio share/{token} read-only", "issues": ["READ-ONLY badge in TopBar + 'shared by …' banner are subtle but readable. Consider a slightly stronger border/background tint on the banner so unauthenticated visitors immediately see they are on a shared view."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_studio_backend.py",
+    "/app/test_reports/pytest/iter3_studio.xml",
+    "/app/test_reports/pytest/iter3_full.xml"
+  ],
+  "action_items": [
+    "(Optional) Make Export dropdown click-to-open instead of CSS group-hover so PNG/SVG/JSON exports are reliably testable (and friendlier on touch).",
+    "(Optional) Add data-testid='studio-canvas' (or 'shared-canvas') and 'shared-banner' on SharedMap.jsx so public-view e2e tests can target the same selectors.",
+    "(Optional) useMemo the nodeTypes/edgeTypes/defaultEdgeOptions inside StudioInner to silence React Flow warning #002.",
+    "(Out of scope here) Update legacy test_delaybridge_backend.py + test_export_endpoints.py to seed their own session instead of relying on the now-removed 'demo-nit76-operations' token (28 legacy tests currently 404).",
+    "(Verify visually) LR / TB / Force auto-arrange actually moves nodes in different layouts — playwright transform read was inconclusive."
+  ],
+  "critical_code_review_comments": [
+    "routes_studio.analyze_graph cycle DFS uses recursive Python (default recursion limit 1000) — on a pathological graph with >1k nodes in one component this will RecursionError; you do catch it, but cycles for that component are then silently dropped. Consider an iterative DFS for robustness.",
+    "routes_studio.create_map and save_map do not bound nodes/edges sizes. A malicious authenticated user could POST huge payloads. Add a soft limit (e.g., 5k nodes / 10k edges) and a per-field size cap.",
+    "routes_studio.set_share validates mode against {public, private, readonly, editable} but the public_edit branch only treats 'editable' as writable — 'public' (which is the default after clicking Public) is also read-only. Documenting that 'public' ≡ read-only-with-public-view (vs 'readonly' which is identical?) would help. Currently 'public' and 'readonly' behave identically for GET/PUT; consider collapsing or labeling clearly in UI.",
+    "Studio.jsx defaultEdgeOptions object is declared at module scope (good) but the nodeTypes/edgeTypes warning still fires — confirm by wrapping with useMemo inside the component or moving to a separate module constant import to avoid re-renders during HMR.",
+    "TopBar.exportPng/exportSvg call rf.fitView then schedule capture via setTimeout(200) — race-prone on large graphs. Prefer `await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))` or wait for the fit animation duration.",
+    "TopBar.onSave for shared/editable uses raw fetch built from PUBLIC_BASE.replace('/public','/studio/public'). Fragile — if PUBLIC_BASE ever changes this breaks silently. Introduce a dedicated PUBLIC_STUDIO_BASE constant.",
+    "LeftSidebar.insertTemplate uses setTimeout(50) to wait for addNode to flush state before adding edges — should compose nodes+edges in a single zustand set() to avoid the timing hack.",
+    "App.js Boots /auth/me on every load — if 401 it silently sets user=null. Make sure the response code is logged at debug level so users debugging logout-stuck states can see why."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_studio_backend.py (new — 16 tests)",
+    "/app/test_reports/pytest/iter3_studio.xml (generated)",
+    "/app/test_reports/pytest/iter3_full.xml (generated)"
+  ],
+  "success_rate": {"backend": "100% on Studio (16/16). Overall suite 41+16/85 = 67% because 28 legacy demo-token tests 404 due to intentional demo-data removal — not a Studio regression.", "frontend": "100% on Studio critical flows (login, navigation, template insert, manual node, node edit, save, share→public, public read-only view, search filter, inspector scores/insights)"},
+  "test_credentials": "admin@delaybridge.io / DelayBridge#2026 (works). No public demo token exists anymore — bring your own Apps Script URL.",
+  "seed_data_creation": "Created in admin account: a default 'My Architecture Map' (auto-created on first /studio visit) which now contains 7 nodes (RenamedNode + Auth API + Database + Frontend + Auth API + Database + Database) and 4 edges, share_mode='public', share_token=5v3sd21xVcL_glSGFzViYQ. Test suite created and deleted 'TEST_studio_map', 'TEST_cycle', 'TEST_orphan' maps inside each class run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Studio backend tests: `pytest /app/backend/tests/test_studio_backend.py -v` (16 tests, ~4s). All Studio data-testids confirmed: studio-page, studio-canvas, studio-left-sidebar, studio-right-inspector, studio-topbar, studio-title-input, studio-save-button, studio-share-button, studio-share-{private|public|readonly|editable}, studio-share-url-row, studio-copy-share, studio-arrange-{lr|tb|force}, studio-export-{button|png|svg|json}, studio-template-{Frontend|Event-driven|Microservices}, studio-add-{Application|Backend|Database|Service|Queue|External|Storage|AI|Auth|UI|API|Worker}-button, studio-search-input, studio-filter-category, studio-filter-type, studio-fetch-button, studio-source-url-input. The Export dropdown uses CSS group-hover and is therefore hard to test via Playwright (.hover releases before .click); PNG/SVG/JSON exports were not download-verified, only the JSON click path was attempted. Public share view (/studio/share/{token}) does NOT have studio-canvas testid — add 'shared-canvas' if you need to assert it. The previous 'demo-nit76-operations' token is permanently removed per spec; legacy regression tests need rewriting to create their own session.",
+  "rca_of_the_issue": "Two non-blockers found: (1) Export dropdown relies on CSS hover state, which makes it non-deterministic under Playwright — switching to controlled open state would unblock automation. (2) 28 demo-token tests fail with 404 because demo seed was intentionally removed per /app/memory/test_credentials.md; mitigation = update those tests to create-own-session-via-API. Neither blocks Studio shipping. Studio module itself is functionally complete: backend analyze (cycle + orphan + bad-pattern + scores + insights), share modes with correct 403/200 semantics, and full UI flow (templates, manual nodes, node editor, save, share, read-only public view) all verified end-to-end."
+}

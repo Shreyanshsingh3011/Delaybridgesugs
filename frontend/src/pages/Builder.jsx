@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api, setAuthHeader, formatErr } from "../api";
-import { Workflow, LogOut, Plus, ChevronDown, FolderOpen, Trash2 } from "lucide-react";
+import { Workflow, LogOut, Plus, ChevronDown, FolderOpen, Trash2, Network } from "lucide-react";
 import SheetsPanel from "../components/SheetsPanel";
 import ConfigPanel from "../components/ConfigPanel";
 import ExportPanel from "../components/ExportPanel";
@@ -176,6 +176,10 @@ export default function Builder({ user, setUser }) {
           <div className="flex-1"></div>
 
           <div className="flex items-center gap-3">
+            <button data-testid="open-studio-button" onClick={() => nav('/studio')}
+                    className="db-btn db-btn-ghost">
+              <Network className="w-4 h-4" /> Dependency Studio
+            </button>
             <button data-testid="delete-session-button" onClick={onDeleteSession}
                     className="db-btn db-btn-ghost" title="Delete project">
               <Trash2 className="w-4 h-4" />

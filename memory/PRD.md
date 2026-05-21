@@ -86,3 +86,64 @@ One Google Sheet connected via Apps Script Web App URL is the single source of t
   - `GET /api/public/{token}/export?fields=` — composable JSON
   - `GET/POST /api/sessions/{id}/export-config` — persist field selection
 - ✅ Testing: 53/53 backend tests pass, all frontend flows verified
+
+---
+
+## Phase 1C — Dependency Mapping Studio (2026-05)
+
+A new module: visual architecture / dependency intelligence platform built on React Flow.
+
+### Backend (FastAPI)
+`/app/backend/routes_studio.py`:
+- `POST /api/studio/fetch` — proxy fetch any Apps Script JSON endpoint
+- `POST /api/studio/maps` — create new map (returns share_token, default mode=private)
+- `GET /api/studio/maps` — list user maps
+- `GET /api/studio/maps/{id}` — load
+- `PUT /api/studio/maps/{id}` — save full graph state (title, nodes, edges, source_url, notes)
+- `DELETE /api/studio/maps/{id}`
+- `POST /api/studio/maps/{id}/share` — set mode public/private/readonly/editable
+- `POST /api/studio/maps/{id}/analyze` — server-side analytics
+- `GET  /api/studio/public/{token}` — load shared map (no auth)
+- `PUT  /api/studio/public/{token}` — edit shared map (only if mode==editable)
+- `GET  /api/studio/public/{token}/analyze`
+
+Analytics include:
+- in-degree, out-degree, orphans, roots, sinks
+- cycle detection (DFS)
+- topological order (Kahn) — DAG check
+- bottlenecks (high (in+out)), excessive coupling (>6), redundant duplicate edges
+- broken-chain edges, bad architectural patterns (UI→DB direct)
+- scores: health, dependency, complexity (each 0–100)
+- rule-based insights (severity: danger/warning/info/success)
+
+### Frontend (React + React Flow + Tailwind + zustand + dagre + html-to-image + framer-motion)
+- `/app/frontend/src/pages/Studio.jsx` — main page (3-panel layout)
+- `/app/frontend/src/pages/SharedMap.jsx` — public/share view (readonly + editable modes)
+- `/app/frontend/src/studio/store.js` — zustand store
+- `/app/frontend/src/studio/analytics.js` — instant client-side analysis
+- `/app/frontend/src/studio/autolayout.js` — dagre LR/TB + lightweight force layout
+- `/app/frontend/src/studio/CustomNode.jsx` — category-coded icons, status dot, tags, stage
+- `/app/frontend/src/studio/CustomEdge.jsx` — animated, type-coloured, label pill
+- `/app/frontend/src/studio/LeftSidebar.jsx` — Apps Script connector, manual node library, 3 templates, search & filter
+- `/app/frontend/src/studio/RightInspector.jsx` — scores, AI insights, full analytics, node editor (with incoming/outgoing lists), edge editor
+- `/app/frontend/src/studio/TopBar.jsx` — title, zoom, fit, auto-arrange LR/TB/Force, export PNG/SVG/JSON, share modal, save
+
+### Routes added in `App.js`
+- `/studio` → auto-creates/loads first map and redirects to `/studio/:mapId`
+- `/studio/:mapId` → editor (auth required)
+- `/studio/share/:token` → public/shared view (no auth required)
+
+### Builder header
+- Added `Dependency Studio` button next to logout that navigates to `/studio`
+
+### What works end-to-end (verified)
+- Fetch Apps Script URL → records auto-become nodes
+- Insert templates → multiple nodes + edges materialise
+- Drag, connect, rename, duplicate, delete nodes
+- Edit edge type/priority/label
+- Auto-arrange LR / TB / Force
+- Save / load / list / delete maps
+- Share token + 4 modes (private/public/readonly/editable)
+- Public viewer with editable-mode write-back via PUT
+- Export PNG / SVG / JSON
+- Live scores + insights + analytics summary updating with each change

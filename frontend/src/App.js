@@ -5,6 +5,8 @@ import "./App.css";
 import { api, setAuthHeader } from "./api";
 import Login from "./pages/Login";
 import Builder from "./pages/Builder";
+import Studio from "./pages/Studio";
+import SharedMap from "./pages/SharedMap";
 
 function App() {
   const [user, setUser] = useState(undefined); // undefined = checking, null = unauthed
@@ -45,6 +47,13 @@ function App() {
           <Route path="/" element={
             user ? <Builder user={user} setUser={setUser} /> : <Navigate to="/login" replace />
           } />
+          <Route path="/studio" element={
+            user ? <Studio /> : <Navigate to="/login" replace />
+          } />
+          <Route path="/studio/:mapId" element={
+            user ? <Studio /> : <Navigate to="/login" replace />
+          } />
+          <Route path="/studio/share/:token" element={<SharedMap />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

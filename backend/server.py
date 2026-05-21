@@ -16,6 +16,7 @@ from auth import seed_admin
 # Routers
 from routes_admin import router as admin_router
 from routes_public import router as public_router
+from routes_studio import router as studio_router
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -71,6 +72,7 @@ async def health():
 app.include_router(health_router)
 app.include_router(admin_router)
 app.include_router(public_router)
+app.include_router(studio_router)
 
 
 # CORS
@@ -93,6 +95,8 @@ async def on_startup():
         await db.sessions.create_index("owner_id")
         await db.chat_logs.create_index("token")
         await db.alert_log.create_index("created_at")
+        await db.studio_maps.create_index("owner_id")
+        await db.studio_maps.create_index("share_token", unique=True)
     except Exception as e:
         logger.warning("Index creation issue: %s", e)
     await seed_admin(db)
