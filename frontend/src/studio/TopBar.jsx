@@ -19,6 +19,7 @@ export default function TopBar({ mapId, onBack, isShared, readonly }) {
   } = useStudio();
   const [busy, setBusy] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const onSave = async () => {
@@ -161,19 +162,25 @@ export default function TopBar({ mapId, onBack, isShared, readonly }) {
 
       <div className="border-l db-divider h-6 mx-1"></div>
 
-      <div className="relative group">
-        <button className="db-btn db-btn-ghost py-1 px-2 text-xs"
-                data-testid="studio-export-button">
+      <div className="relative">
+        <button
+          onClick={() => setShowExport((s) => !s)}
+          className="db-btn db-btn-ghost py-1 px-2 text-xs"
+          data-testid="studio-export-button"
+        >
           <Download className="w-3.5 h-3.5" /> Export
         </button>
-        <div className="absolute right-0 top-full mt-1 hidden group-hover:block db-card p-1 z-50 w-32">
-          <button data-testid="studio-export-png" onClick={exportPng}
-                  className="w-full text-left text-xs py-1.5 px-2 hover:bg-white/5 rounded">PNG</button>
-          <button data-testid="studio-export-svg" onClick={exportSvg}
-                  className="w-full text-left text-xs py-1.5 px-2 hover:bg-white/5 rounded">SVG</button>
-          <button data-testid="studio-export-json" onClick={exportJson}
-                  className="w-full text-left text-xs py-1.5 px-2 hover:bg-white/5 rounded">JSON</button>
-        </div>
+        {showExport && (
+          <div className="absolute right-0 top-full mt-1 db-card p-1 z-50 w-32"
+               data-testid="studio-export-menu">
+            <button data-testid="studio-export-png" onClick={() => { setShowExport(false); exportPng(); }}
+                    className="w-full text-left text-xs py-1.5 px-2 hover:bg-white/5 rounded">PNG</button>
+            <button data-testid="studio-export-svg" onClick={() => { setShowExport(false); exportSvg(); }}
+                    className="w-full text-left text-xs py-1.5 px-2 hover:bg-white/5 rounded">SVG</button>
+            <button data-testid="studio-export-json" onClick={() => { setShowExport(false); exportJson(); }}
+                    className="w-full text-left text-xs py-1.5 px-2 hover:bg-white/5 rounded">JSON</button>
+          </div>
+        )}
       </div>
 
       {!isShared && (
