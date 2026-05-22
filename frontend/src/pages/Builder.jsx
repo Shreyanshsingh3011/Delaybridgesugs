@@ -178,7 +178,7 @@ export default function Builder({ user, setUser }) {
           <div className="flex items-center gap-3">
             <button data-testid="open-studio-button" onClick={() => nav('/studio')}
                     className="db-btn db-btn-ghost">
-              <Network className="w-4 h-4" /> Dependency Studio
+              <Network className="w-4 h-4" /> Dependency Resolver
             </button>
             <button data-testid="delete-session-button" onClick={onDeleteSession}
                     className="db-btn db-btn-ghost" title="Delete project">

@@ -1,172 +1,144 @@
 import { create } from "zustand";
-import { applyNodeChanges, applyEdgeChanges, addEdge } from "reactflow";
 
-const NODE_CATEGORIES = [
-  "Application", "Backend", "Database", "Service", "Queue", "External",
-  "Storage", "AI", "Auth", "UI", "API", "Worker",
-];
+const uid = (p = "x") =>
+  `${p}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 
-const DEPENDENCY_TYPES = [
-  "Required", "Optional", "Direct", "Indirect", "Runtime", "Build-time",
-  "API", "Database", "Event-driven", "Shared", "Sequential", "Blocking",
-];
+const refEq = (a, b) => a.t === b.t && a.i === b.i;
+const dedupRefs = (refs) => {
+  const out = [];
+  for (const r of refs) if (!out.some((x) => refEq(x, r))) out.push(r);
+  return out;
+};
+
+const inferCard = (from, to) => {
+  const s = from.length > 1 ? "N" : "1";
+  const t = to.length > 1 ? "N" : "1";
+  return `${s}:${t}`;
+};
 
 export const useStudio = create((set, get) => ({
-  mapId: null,
-  title: "Untitled Architecture Map",
-  shareToken: null,
-  shareMode: "private",
-  sourceUrl: "",
-  nodes: [],
-  edges: [],
-  selectedId: null,
-  filterCategory: "",
-  filterType: "",
-  searchTerm: "",
-  dirty: false,
+  // --- ingested source (structure only)
+  source: null,          // { url, headers, rowIds, fetchedAt }
 
-  setMap: (m) => set({
-    mapId: m.id,
-    title: m.title || "Untitled Architecture Map",
-    shareToken: m.share_token || null,
-    shareMode: m.share_mode || "private",
-    sourceUrl: m.source_url || "",
-    nodes: m.nodes || [],
-    edges: m.edges || [],
-    dirty: false,
-  }),
+  // --- authored state
+  groups: [],            // [{ id, name, kind:'row'|'col', members:[rowId|colLabel] }]
+  edges: [],             // [{ id, from:Ref[], to:Ref[], cardinality, label }]
 
-  setTitle: (t) => set({ title: t, dirty: true }),
+  // --- palette / picker
+  paletteTab: "rows",    // 'rows' | 'cols' | 'groups'
+  paletteSearch: "",
+  paletteSelection: [],  // array of Refs
 
-  onNodesChange: (changes) =>
-    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), dirty: true })),
+  // --- builder
+  sourceSelection: [],
+  targetSelection: [],
 
-  onEdgesChange: (changes) =>
-    set((s) => ({ edges: applyEdgeChanges(changes, s.edges), dirty: true })),
-
-  onConnect: (conn) =>
-    set((s) => ({
-      edges: addEdge(
-        {
-          ...conn,
-          id: `e-${conn.source}-${conn.target}-${Date.now()}`,
-          type: "dependency",
-          animated: true,
-          data: { type: "Required", priority: "Normal", note: "" },
-          label: "Required",
-        },
-        s.edges
-      ),
-      dirty: true,
-    })),
-
-  setNodes: (nodes) => set({ nodes, dirty: true }),
-  setEdges: (edges) => set({ edges, dirty: true }),
-
-  addNode: (partial) =>
-    set((s) => {
-      const id = partial.id || `n-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const node = {
-        id,
-        type: "custom",
-        position: partial.position || { x: 80 + Math.random() * 200, y: 80 + Math.random() * 200 },
-        data: {
-          name: partial.name || "New node",
-          category: partial.category || "Service",
-          type: partial.type || "Service",
-          status: partial.status || "active",
-          notes: "",
-          stage: partial.stage || null,
-          tags: partial.tags || [],
-        },
-      };
-      return { nodes: [...s.nodes, node], dirty: true };
+  // ---- bootstrapping
+  loadFromShare: (decoded) =>
+    set({
+      source: decoded.source || null,
+      groups: decoded.groups || [],
+      edges: decoded.edges || [],
+      paletteSelection: [],
+      sourceSelection: [],
+      targetSelection: [],
     }),
 
-  importRecords: (rows) =>
-    set((s) => {
-      const usedIds = new Set(s.nodes.map((n) => n.id));
-      const cols = 4;
-      let added = 0;
-      const newNodes = rows.map((r, i) => {
-        const candidate = String(r.id ?? r.name ?? `imp-${Date.now()}-${i}`);
-        let nid = candidate;
-        let k = 1;
-        while (usedIds.has(nid)) { nid = `${candidate}-${k++}`; }
-        usedIds.add(nid);
-        added++;
-        return {
-          id: nid,
-          type: "custom",
-          position: {
-            x: 120 + (i % cols) * 260,
-            y: 120 + Math.floor(i / cols) * 160,
-          },
-          data: {
-            name: r.name || r.title || r.activity || `Node ${i + 1}`,
-            category: r.category || r.stage || "Service",
-            type: r.type || "Service",
-            status: r.status || "active",
-            notes: r.notes || r.description || "",
-            stage: r.stage || null,
-            tags: r.tags || [],
-            raw: r,
-          },
-        };
-      });
-      return { nodes: [...s.nodes, ...newNodes], dirty: true };
+  setSource: (src) =>
+    set({
+      source: src,
+      // Resetting groups/edges would lose work — keep them; share-link is portable.
     }),
 
-  updateNode: (id, patch) =>
-    set((s) => ({
-      nodes: s.nodes.map((n) =>
-        n.id === id ? { ...n, data: { ...n.data, ...patch } } : n
-      ),
-      dirty: true,
-    })),
+  resetAll: () =>
+    set({
+      source: null, groups: [], edges: [],
+      paletteSelection: [], sourceSelection: [], targetSelection: [],
+      paletteTab: "rows", paletteSearch: "",
+    }),
 
-  removeNode: (id) =>
-    set((s) => ({
-      nodes: s.nodes.filter((n) => n.id !== id),
-      edges: s.edges.filter((e) => e.source !== id && e.target !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
-      dirty: true,
-    })),
-
-  duplicateNode: (id) =>
+  // ---- palette
+  setPaletteTab: (t) => set({ paletteTab: t, paletteSelection: [], paletteSearch: "" }),
+  setPaletteSearch: (q) => set({ paletteSearch: q }),
+  togglePaletteItem: (ref) =>
     set((s) => {
-      const n = s.nodes.find((x) => x.id === id);
-      if (!n) return {};
-      const newId = `${n.id}-copy-${Date.now()}`;
+      const exists = s.paletteSelection.some((r) => refEq(r, ref));
       return {
-        nodes: [
-          ...s.nodes,
-          { ...n, id: newId,
-            position: { x: n.position.x + 40, y: n.position.y + 40 },
-            data: { ...n.data, name: `${n.data.name} (copy)` } },
-        ],
-        dirty: true,
+        paletteSelection: exists
+          ? s.paletteSelection.filter((r) => !refEq(r, ref))
+          : [...s.paletteSelection, ref],
       };
     }),
+  selectAllPalette: (refs) => set({ paletteSelection: refs }),
+  clearPaletteSelection: () => set({ paletteSelection: [] }),
 
-  updateEdge: (id, patch) =>
-    set((s) => ({
-      edges: s.edges.map((e) =>
-        e.id === id
-          ? { ...e, ...patch, data: { ...e.data, ...(patch.data || {}) } }
-          : e
-      ),
-      dirty: true,
-    })),
+  // ---- groups
+  saveSelectionAsGroup: (name) =>
+    set((s) => {
+      const sel = s.paletteSelection;
+      if (!sel.length) return {};
+      // Only allow uniform kind (row or col), and only single-kind items.
+      const kinds = new Set(sel.map((r) => r.t));
+      if (kinds.size > 1 || !["row", "col"].some((k) => kinds.has(k))) return {};
+      const kind = sel[0].t;
+      const grp = {
+        id: uid("g"),
+        name: name || `Group ${s.groups.length + 1}`,
+        kind,
+        members: sel.map((r) => r.i),
+      };
+      return { groups: [...s.groups, grp], paletteSelection: [] };
+    }),
+  renameGroup: (id, name) =>
+    set((s) => ({ groups: s.groups.map((g) => (g.id === id ? { ...g, name } : g)) })),
+  deleteGroup: (id) =>
+    set((s) => {
+      // Remove the group itself + any edges that referenced it
+      const refMatches = (r) => !(r.t === "group" && r.i === id);
+      const edges = s.edges
+        .map((e) => ({
+          ...e,
+          from: e.from.filter(refMatches),
+          to: e.to.filter(refMatches),
+        }))
+        .filter((e) => e.from.length && e.to.length);
+      return { groups: s.groups.filter((g) => g.id !== id), edges };
+    }),
 
-  removeEdge: (id) =>
-    set((s) => ({ edges: s.edges.filter((e) => e.id !== id), dirty: true })),
+  // ---- builder
+  setSourceFromSelection: () =>
+    set((s) => ({ sourceSelection: dedupRefs(s.paletteSelection) })),
+  setTargetFromSelection: () =>
+    set((s) => ({ targetSelection: dedupRefs(s.paletteSelection) })),
+  setSelectionWholeRow: () =>
+    set((s) =>
+      s.source ? { paletteSelection: s.source.rowIds.map((i) => ({ t: "row", i })) } : {}
+    ),
+  setSelectionWholeCol: () =>
+    set((s) =>
+      s.source ? { paletteSelection: s.source.headers.map((i) => ({ t: "col", i })) } : {}
+    ),
+  swapEnds: () =>
+    set((s) => ({ sourceSelection: s.targetSelection, targetSelection: s.sourceSelection })),
+  clearBuilder: () => set({ sourceSelection: [], targetSelection: [] }),
 
-  select: (id) => set({ selectedId: id }),
+  commitEdge: (label) =>
+    set((s) => {
+      const from = dedupRefs(s.sourceSelection);
+      const to = dedupRefs(s.targetSelection);
+      if (!from.length || !to.length) return {};
+      const card = inferCard(from, to);
+      const edge = { id: uid("e"), from, to, cardinality: card, label: label || "" };
+      return { edges: [...s.edges, edge], sourceSelection: [], targetSelection: [] };
+    }),
 
-  setFilter: (key, value) => set({ [key]: value }),
-  clearDirty: () => set({ dirty: false }),
-
-  CATEGORIES: NODE_CATEGORIES,
-  DEPENDENCY_TYPES,
+  deleteEdge: (id) =>
+    set((s) => ({ edges: s.edges.filter((e) => e.id !== id) })),
+  updateEdgeLabel: (id, label) =>
+    set((s) => ({ edges: s.edges.map((e) => (e.id === id ? { ...e, label } : e)) })),
+  updateEdgeCardinality: (id, card) =>
+    set((s) => ({ edges: s.edges.map((e) => (e.id === id ? { ...e, cardinality: card } : e)) })),
 }));
+
+export const refKey = (r) => `${r.t}:${r.i}`;
+export const refsEq = refEq;

@@ -95,8 +95,6 @@ async def on_startup():
         await db.sessions.create_index("owner_id")
         await db.chat_logs.create_index("token")
         await db.alert_log.create_index("created_at")
-        await db.studio_maps.create_index("owner_id")
-        await db.studio_maps.create_index("share_token", unique=True)
     except Exception as e:
         logger.warning("Index creation issue: %s", e)
     await seed_admin(db)
