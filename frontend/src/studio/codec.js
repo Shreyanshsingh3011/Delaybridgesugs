@@ -41,6 +41,7 @@ export function encodeState(state) {
       t: x.to,
       c: x.cardinality, // '1:1' | '1:N' | 'N:1' | 'N:N'
       l: x.label || "",
+      fi: x.fanIn ? 1 : 0,
     })),
   };
   return b64urlEncode(JSON.stringify(minimal));
@@ -66,6 +67,7 @@ export function decodeState(token) {
       to: x.t || [],
       cardinality: x.c || "1:1",
       label: x.l || "",
+      fanIn: !!x.fi,
     })),
   };
 }

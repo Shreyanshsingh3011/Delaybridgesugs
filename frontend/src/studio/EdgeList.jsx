@@ -26,9 +26,16 @@ export default function EdgeList() {
           <div key={e.id}
                data-testid={`edge-row-${e.id}`}
                className="db-card p-2.5"
-               style={{ background: "rgba(255,255,255,0.015)" }}>
+               style={{
+                 background: e.fanIn ? "rgba(0,170,255,0.05)" : "rgba(255,255,255,0.015)",
+                 borderColor: e.fanIn ? "rgba(0,170,255,0.35)" : undefined,
+               }}>
             <div className="flex items-center justify-between gap-2 mb-2">
               <span className="db-chip db-chip-blue text-[10px]">{e.cardinality}</span>
+              {e.fanIn && (
+                <span className="db-chip db-chip-orange text-[10px]"
+                      data-testid={`edge-fanin-${e.id}`}>FAN-IN</span>
+              )}
               <span className="flex-1"></span>
               <select
                 data-testid={`edge-card-${e.id}`}
@@ -43,11 +50,33 @@ export default function EdgeList() {
                 <Trash2 className="w-3 h-3" />
               </button>
             </div>
-            <div className="flex flex-wrap items-center gap-1 text-[10px] mono">
-              <Side refs={e.from} nameOfGroup={nameOfGroup} />
-              <ArrowRight className="w-3 h-3 db-accent flex-shrink-0" />
-              <Side refs={e.to} nameOfGroup={nameOfGroup} />
-            </div>
+            {e.fanIn ? (
+              <div className="text-[10px] mono">
+                <div className="flex flex-wrap items-center gap-1 mb-1">
+                  <span style={{ color: "var(--db-muted)" }}>source:</span>
+                  <span className="db-chip db-chip-orange text-[10px]">{e.to[0]?.i}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  <span style={{ color: "var(--db-muted)" }}>
+                    dependsOn[{e.from.length}]:
+                  </span>
+                  {e.from.slice(0, 8).map((r, i) => (
+                    <span key={i} className="db-chip db-chip-blue text-[10px]">{r.i}</span>
+                  ))}
+                  {e.from.length > 8 && (
+                    <span className="db-chip db-chip-grey text-[10px]">
+                      +{e.from.length - 8}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1 text-[10px] mono">
+                <Side refs={e.from} nameOfGroup={nameOfGroup} />
+                <ArrowRight className="w-3 h-3 db-accent flex-shrink-0" />
+                <Side refs={e.to} nameOfGroup={nameOfGroup} />
+              </div>
+            )}
             <input
               data-testid={`edge-label-${e.id}`}
               className="db-input text-[10px] mt-2"

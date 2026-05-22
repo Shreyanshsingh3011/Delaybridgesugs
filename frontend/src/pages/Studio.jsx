@@ -7,9 +7,10 @@ import { buildShareUrl, readHashState, clearHash } from "../studio/codec";
 import Palette from "../studio/Palette";
 import Graph from "../studio/Graph";
 import EdgeList from "../studio/EdgeList";
+import ColumnDependencyWizard from "../studio/ColumnDependencyWizard";
 import {
   ChevronLeft, Link2, Loader2, Workflow, Copy, Check, RefreshCw,
-  Share2, X, Eye,
+  Share2, X, Eye, Wand2, Hand,
 } from "lucide-react";
 
 export default function Studio() {
@@ -22,6 +23,7 @@ export default function Studio() {
   const [busy, setBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [authoringMode, setAuthoringMode] = useState("wizard"); // 'wizard' | 'generic'
 
   // Restore from URL fragment on mount
   useEffect(() => {
@@ -132,7 +134,29 @@ export default function Studio() {
 
       {/* Main 3-panel layout */}
       <main className="flex-1 flex gap-3 p-3 min-h-0">
-        <Palette />
+        <div className="flex flex-col gap-2" style={{ width: 360 }}>
+          <div className="flex gap-1" data-testid="authoring-mode-switch">
+            <button
+              data-testid="mode-wizard"
+              onClick={() => setAuthoringMode("wizard")}
+              className="db-btn db-btn-ghost py-1.5 px-2 text-[11px] flex-1 justify-center"
+              style={authoringMode === "wizard"
+                ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#e7e8ee" }
+                : {}}>
+              <Wand2 className="w-3 h-3" /> Column wizard
+            </button>
+            <button
+              data-testid="mode-generic"
+              onClick={() => setAuthoringMode("generic")}
+              className="db-btn db-btn-ghost py-1.5 px-2 text-[11px] flex-1 justify-center"
+              style={authoringMode === "generic"
+                ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#e7e8ee" }
+                : {}}>
+              <Hand className="w-3 h-3" /> Generic builder
+            </button>
+          </div>
+          {authoringMode === "wizard" ? <ColumnDependencyWizard /> : <Palette />}
+        </div>
         <Graph />
         <EdgeList />
       </main>

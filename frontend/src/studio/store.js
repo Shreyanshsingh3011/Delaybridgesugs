@@ -132,6 +132,28 @@ export const useStudio = create((set, get) => ({
       return { edges: [...s.edges, edge], sourceSelection: [], targetSelection: [] };
     }),
 
+  // Atomic column-on-column dependency set: child depends on [parents...]
+  // Stored as ONE edge with from=parents, to=[child]. No pairwise decomposition.
+  commitColumnDependency: (child, parents, label) =>
+    set((s) => {
+      if (!child || !parents || !parents.length) return {};
+      const childRef = { t: "col", i: child };
+      const parentRefs = dedupRefs(
+        parents.filter((p) => p && p !== child).map((p) => ({ t: "col", i: p }))
+      );
+      if (!parentRefs.length) return {};
+      const card = `${parentRefs.length > 1 ? "N" : "1"}:1`;
+      const edge = {
+        id: uid("e"),
+        from: parentRefs,
+        to: [childRef],
+        cardinality: card,
+        label: label || "",
+        fanIn: true,
+      };
+      return { edges: [...s.edges, edge] };
+    }),
+
   deleteEdge: (id) =>
     set((s) => ({ edges: s.edges.filter((e) => e.id !== id) })),
   updateEdgeLabel: (id, label) =>
