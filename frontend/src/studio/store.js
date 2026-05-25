@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { wouldCreateCycle, computeRewire } from "./chainGraph";
 
 const uid = (p = "x") =>
   `${p}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -33,15 +34,26 @@ export const useStudio = create((set, get) => ({
   sourceSelection: [],
   targetSelection: [],
 
+  // --- Column Dependency Chains (DAG over columnId namespace)
+  //  chainNodes: [columnId, ...]
+  //  chainEdges: [{ id, from:columnId, to:columnId, kind:'direct'|'skip', label }]
+  //  Transitive edges are NEVER stored — derived in chainGraph.js
+  chainNodes: [],
+  chainEdges: [],
+  chainSelected: null, // columnId of inspected node
+
   // ---- bootstrapping
   loadFromShare: (decoded) =>
     set({
       source: decoded.source || null,
       groups: decoded.groups || [],
       edges: decoded.edges || [],
+      chainNodes: decoded.chainNodes || [],
+      chainEdges: decoded.chainEdges || [],
       paletteSelection: [],
       sourceSelection: [],
       targetSelection: [],
+      chainSelected: null,
     }),
 
   setSource: (src) =>
@@ -53,9 +65,77 @@ export const useStudio = create((set, get) => ({
   resetAll: () =>
     set({
       source: null, groups: [], edges: [],
+      chainNodes: [], chainEdges: [], chainSelected: null,
       paletteSelection: [], sourceSelection: [], targetSelection: [],
       paletteTab: "rows", paletteSearch: "",
     }),
+
+  // ---- chain operations
+  addChainNode: (columnId) =>
+    set((s) => {
+      if (!columnId) return {};
+      if (s.chainNodes.includes(columnId)) return {};
+      return { chainNodes: [...s.chainNodes, columnId] };
+    }),
+
+  addChainNodes: (columnIds) =>
+    set((s) => {
+      const fresh = columnIds.filter((c) => c && !s.chainNodes.includes(c));
+      if (!fresh.length) return {};
+      return { chainNodes: [...s.chainNodes, ...fresh] };
+    }),
+
+  selectChainNode: (columnId) => set({ chainSelected: columnId || null }),
+
+  // Add a direct/skip edge. Returns { ok, reason } via callback pattern.
+  commitChainEdge: (from, to, kind, label) => {
+    const s = get();
+    if (!from || !to || from === to) return { ok: false, reason: "self_loop" };
+    if (!s.chainNodes.includes(from) || !s.chainNodes.includes(to))
+      return { ok: false, reason: "missing_node" };
+    if (kind !== "direct" && kind !== "skip")
+      return { ok: false, reason: "bad_kind" };
+    if (s.chainEdges.some((e) => e.from === from && e.to === to && e.kind === kind))
+      return { ok: false, reason: "duplicate" };
+    if (wouldCreateCycle(s.chainNodes, s.chainEdges, from, to))
+      return { ok: false, reason: "cycle" };
+    const e = { id: uid("ce"), from, to, kind, label: label || "" };
+    set({ chainEdges: [...s.chainEdges, e] });
+    return { ok: true };
+  },
+
+  deleteChainEdge: (id) =>
+    set((s) => ({ chainEdges: s.chainEdges.filter((e) => e.id !== id) })),
+
+  updateChainEdgeLabel: (id, label) =>
+    set((s) => ({
+      chainEdges: s.chainEdges.map((e) => (e.id === id ? { ...e, label } : e)),
+    })),
+
+  // Delete a chain node. mode = 'disconnect' (drop incident edges) or 'rewire'
+  // ('rewire' first inserts P×S direct edges, then drops incident edges).
+  deleteChainNode: (columnId, mode = "disconnect") =>
+    set((s) => {
+      if (!s.chainNodes.includes(columnId)) return {};
+      let edges = s.chainEdges;
+      if (mode === "rewire") {
+        const { news } = computeRewire(s.chainNodes, edges, columnId);
+        for (const n of news) {
+          if (!edges.some((e) => e.from === n.from && e.to === n.to && e.kind === "direct")) {
+            edges = [...edges, { id: uid("ce"), from: n.from, to: n.to, kind: "direct", label: "" }];
+          }
+        }
+      }
+      edges = edges.filter((e) => e.from !== columnId && e.to !== columnId);
+      return {
+        chainNodes: s.chainNodes.filter((n) => n !== columnId),
+        chainEdges: edges,
+        chainSelected: s.chainSelected === columnId ? null : s.chainSelected,
+      };
+    }),
+
+  resetChains: () =>
+    set({ chainNodes: [], chainEdges: [], chainSelected: null }),
 
   // ---- palette
   setPaletteTab: (t) => set({ paletteTab: t, paletteSelection: [], paletteSearch: "" }),

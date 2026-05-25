@@ -1,7 +1,7 @@
 // Round-trip lossless Base64URL codec for the dependency graph state.
 // The link IS the logic — no server persistence.
 
-const VERSION = 1;
+const VERSION = 2;
 
 function b64urlEncode(str) {
   // UTF-8 safe encode
@@ -43,6 +43,18 @@ export function encodeState(state) {
       l: x.label || "",
       fi: x.fanIn ? 1 : 0,
     })),
+    // Column dependency chain subsystem — DAG of columnId.
+    // We persist ONLY direct + skip edges. Transitive edges are re-derived.
+    cn: state.chainNodes || [],
+    ce: (state.chainEdges || [])
+      .filter((x) => x.kind === "direct" || x.kind === "skip")
+      .map((x) => ({
+        i: x.id,
+        f: x.from,
+        t: x.to,
+        k: x.kind === "skip" ? "s" : "d",
+        l: x.label || "",
+      })),
   };
   return b64urlEncode(JSON.stringify(minimal));
 }
@@ -50,7 +62,7 @@ export function encodeState(state) {
 export function decodeState(token) {
   const raw = b64urlDecode(token);
   const j = JSON.parse(raw);
-  if (!j || j.v !== VERSION) throw new Error("Unsupported share-link version.");
+  if (!j || (j.v !== VERSION && j.v !== 1)) throw new Error("Unsupported share-link version.");
   return {
     source: j.src
       ? { url: j.src.u, headers: j.src.h || [], rowIds: j.src.r || [], fetchedAt: null }
@@ -68,6 +80,14 @@ export function decodeState(token) {
       cardinality: x.c || "1:1",
       label: x.l || "",
       fanIn: !!x.fi,
+    })),
+    chainNodes: j.cn || [],
+    chainEdges: (j.ce || []).map((x) => ({
+      id: x.i,
+      from: x.f,
+      to: x.t,
+      kind: x.k === "s" ? "skip" : "direct",
+      label: x.l || "",
     })),
   };
 }

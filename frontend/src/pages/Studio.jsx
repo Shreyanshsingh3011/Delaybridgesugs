@@ -8,15 +8,17 @@ import Palette from "../studio/Palette";
 import Graph from "../studio/Graph";
 import EdgeList from "../studio/EdgeList";
 import ColumnDependencyWizard from "../studio/ColumnDependencyWizard";
+import ColumnChainStudio from "../studio/ColumnChainStudio";
 import {
   ChevronLeft, Link2, Loader2, Workflow, Copy, Check, RefreshCw,
-  Share2, X, Eye, Wand2, Hand,
+  Share2, X, Eye, Wand2, Hand, Network,
 } from "lucide-react";
 
 export default function Studio() {
   const nav = useNavigate();
   const {
-    source, edges, groups, setSource, loadFromShare, resetAll,
+    source, edges, groups, chainNodes, chainEdges,
+    setSource, loadFromShare, resetAll,
   } = useStudio();
 
   const [url, setUrl] = useState("");
@@ -24,6 +26,7 @@ export default function Studio() {
   const [shareOpen, setShareOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [authoringMode, setAuthoringMode] = useState("wizard"); // 'wizard' | 'generic'
+  const [studioTab, setStudioTab] = useState("resolver"); // 'resolver' | 'chains'
 
   // Restore from URL fragment on mount
   useEffect(() => {
@@ -38,8 +41,8 @@ export default function Studio() {
   }, []);
 
   const shareUrl = useMemo(
-    () => buildShareUrl({ source, groups, edges }),
-    [source, groups, edges]
+    () => buildShareUrl({ source, groups, edges, chainNodes, chainEdges }),
+    [source, groups, edges, chainNodes, chainEdges]
   );
 
   const fetchUrl = async () => {
@@ -132,34 +135,70 @@ export default function Studio() {
         </div>
       </div>
 
-      {/* Main 3-panel layout */}
-      <main className="flex-1 flex gap-3 p-3 min-h-0">
-        <div className="flex flex-col gap-2" style={{ width: 360 }}>
-          <div className="flex gap-1" data-testid="authoring-mode-switch">
-            <button
-              data-testid="mode-wizard"
-              onClick={() => setAuthoringMode("wizard")}
-              className="db-btn db-btn-ghost py-1.5 px-2 text-[11px] flex-1 justify-center"
-              style={authoringMode === "wizard"
-                ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#e7e8ee" }
-                : {}}>
-              <Wand2 className="w-3 h-3" /> Column wizard
-            </button>
-            <button
-              data-testid="mode-generic"
-              onClick={() => setAuthoringMode("generic")}
-              className="db-btn db-btn-ghost py-1.5 px-2 text-[11px] flex-1 justify-center"
-              style={authoringMode === "generic"
-                ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#e7e8ee" }
-                : {}}>
-              <Hand className="w-3 h-3" /> Generic builder
-            </button>
+      {/* Studio tab switcher */}
+      <div className="px-5 pt-3 flex items-center gap-1" data-testid="studio-tabs">
+        <button
+          data-testid="studio-tab-resolver"
+          onClick={() => setStudioTab("resolver")}
+          className="db-btn db-btn-ghost py-1.5 px-3 text-[11px]"
+          style={studioTab === "resolver"
+            ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#6cd0ff" }
+            : {}}>
+          <Workflow className="w-3 h-3" /> Row/Col resolver
+        </button>
+        <button
+          data-testid="studio-tab-chains"
+          onClick={() => setStudioTab("chains")}
+          className="db-btn db-btn-ghost py-1.5 px-3 text-[11px]"
+          style={studioTab === "chains"
+            ? { borderColor: "rgba(255,178,101,0.5)", background: "rgba(255,178,101,0.08)", color: "#ffb265" }
+            : {}}>
+          <Network className="w-3 h-3" /> Column chain DAG
+          {chainNodes.length > 0 && (
+            <span className="db-chip text-[9px] ml-1"
+                  style={{ background: "rgba(255,178,101,0.15)",
+                           border: "1px solid rgba(255,178,101,0.45)",
+                           color: "#ffb265" }}>
+              {chainNodes.length}n · {chainEdges.length}e
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Main panel */}
+      {studioTab === "resolver" ? (
+        <main className="flex-1 flex gap-3 p-3 min-h-0">
+          <div className="flex flex-col gap-2" style={{ width: 360 }}>
+            <div className="flex gap-1" data-testid="authoring-mode-switch">
+              <button
+                data-testid="mode-wizard"
+                onClick={() => setAuthoringMode("wizard")}
+                className="db-btn db-btn-ghost py-1.5 px-2 text-[11px] flex-1 justify-center"
+                style={authoringMode === "wizard"
+                  ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#e7e8ee" }
+                  : {}}>
+                <Wand2 className="w-3 h-3" /> Column wizard
+              </button>
+              <button
+                data-testid="mode-generic"
+                onClick={() => setAuthoringMode("generic")}
+                className="db-btn db-btn-ghost py-1.5 px-2 text-[11px] flex-1 justify-center"
+                style={authoringMode === "generic"
+                  ? { borderColor: "rgba(0,170,255,0.5)", background: "rgba(0,170,255,0.08)", color: "#e7e8ee" }
+                  : {}}>
+                <Hand className="w-3 h-3" /> Generic builder
+              </button>
+            </div>
+            {authoringMode === "wizard" ? <ColumnDependencyWizard /> : <Palette />}
           </div>
-          {authoringMode === "wizard" ? <ColumnDependencyWizard /> : <Palette />}
-        </div>
-        <Graph />
-        <EdgeList />
-      </main>
+          <Graph />
+          <EdgeList />
+        </main>
+      ) : (
+        <main className="flex-1 flex p-3 min-h-0">
+          <ColumnChainStudio />
+        </main>
+      )}
 
       {/* Share modal */}
       {shareOpen && (
@@ -197,17 +236,18 @@ export default function Studio() {
                 <Eye className="w-3.5 h-3.5" /> Open
               </a>
             </div>
-            <div className="grid grid-cols-3 gap-3 mt-4">
+            <div className="grid grid-cols-4 gap-3 mt-4">
               <Stat label="Encoded length" value={`${shareUrl.length} chars`} />
               <Stat label="Edges" value={edges.length} />
-              <Stat label="Groups" value={groups.length} />
+              <Stat label="Chain nodes" value={chainNodes.length} />
+              <Stat label="Chain edges" value={chainEdges.length} />
             </div>
             <details className="mt-3">
               <summary className="text-[11px] mono uppercase tracking-wider cursor-pointer"
                        style={{ color: "var(--db-muted)" }}>raw payload</summary>
               <pre className="db-code mt-2 max-h-[180px] overflow-auto"
                    data-testid="studio-share-payload">
-                {JSON.stringify({ source, groups, edges }, null, 2)}
+                {JSON.stringify({ source, groups, edges, chainNodes, chainEdges }, null, 2)}
               </pre>
             </details>
           </div>

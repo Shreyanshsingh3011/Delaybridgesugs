@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 4 — Column Dependency Chaining Subsystem (Column Chain DAG) E2E. Wrote /app/frontend/src/studio/__tests__/chain_pure.test.mjs covering chainGraph.js pure algorithms (buildReach, wouldCreateCycle, nodeInspection, topoSort, computeRewire, withoutNode, upsertEdge) + codec.js v2 round-trip + v1 backwards compat. 30/30 pure tests PASS. Frontend Playwright e2e via /login → /studio → injected `source` via share-link fragment (#d=base64url with mock headers A..E) → switched to 'Column chain DAG' tab. Verified end-to-end: (a) Tab switcher works and state preserves; (b) Pre-fetch gating message 'Fetch an Apps Script URL first to materialise columns.' shown when source is null; (c) chain-pick-{A..E} chips render, 'Add 3 to chain' commits 3 nodes (chain-stat-nodes=3); (d) Direct A→B and B→C committed → chain-stat-direct=2; (e) CYCLE prevention: attempting C→A keeps chain-stat-direct=2 (rejected); (f) DUPLICATE prevention: re-committing A→B keeps stat=2; (g) SELF-LOOP filter: to-dropdown excludes the from value (options=['— target —','B','C'] when from=A); (h) SKIP edge A→C committed → chain-stat-skip=1; (i) NO transitive edges drawn — rendered .react-flow__edge count = 3 = chainEdges.length exactly; (j) Inspector for C shows directIn=[B], transitiveAnc=0 (A is in skipIn so excluded from transitive — correct); (k) Topological order chip-row shows '1.A 2.B 3.C'; (l) Node deletion modal: 'Rewire' on B successfully removes B and inserts A→C direct (final: nodes=2, direct=1, skip=1 preserving the prior A→C skip); (m) Edge deletion via incident-edges trash works (skip=0 after deletion); (n) Share-link round-trip and v1 backwards compat verified by the 30 pure tests (decoder accepts j.v==1 OR j.v==2 with empty chainNodes/chainEdges). The share-modal Playwright open step timed out because sonner toasts (which stack on the top-right) were overlaying the Share-link button at the moment of click — purely a test-timing issue, not a functional regression; codec round-trip is independently proven.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Studio TopBar — Share link button", "issue": "Sonner toast container (top-right) overlaps the Share-link button after a burst of commit/rewire toasts, intermittently preventing clicks until toasts auto-dismiss (~3s). UX nuisance + flaky for automated tests. Consider toast position bottom-right OR padding the header right edge OR shortening toast duration to ~1.5s.", "selector": "[data-testid='studio-share-button']", "priority": "LOW"},
+      {"component": "ChainInspector — section labels", "issue": "Cosmetic only — 'transitive ancestors (0)' is shown even when the count is 0 with an em-dash placeholder. Section is always rendered which is fine, but consider collapsing empty sections on a flag for less visual noise on small chains.", "selector": "[data-testid='sect-transitive-anc']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Column chain DAG", "issues": ["Layout is clean and consistent with DelayBridge dark theme — left authoring (360px), center React Flow, right inspector (360px). Direct edges render solid + animated cyan; skip edges render dashed lilac. Selected node has orange glow. Topo order, incident edges and delete-node modal all readable. No contrast issues observed."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/frontend/src/studio/__tests__/chain_pure.test.mjs"
+  ],
+  "action_items": [
+    "(Optional) Move sonner Toaster to bottom-right OR pad the topbar so toasts never overlap Share/Reset buttons (flaky e2e clicks).",
+    "(Optional) Collapse empty inspector sections OR show them in a single 'no transitive relationships' line to declutter small chains.",
+    "(Optional) Expose window.__studioStore__ (or similar) ONLY in non-prod builds (process.env.NODE_ENV !== 'production') to make state-injection-based e2e tests possible without needing the share-link source-injection workaround."
+  ],
+  "critical_code_review_comments": [
+    "chainGraph.js buildReach calls bfs(out,n) and bfs(inn,n) for every node — O(V*(V+E)). Fine for small chains but if the source has 100+ columns the inspector will recompute on every edge change. Memoize at the store level OR derive once per (nodes,edges) tuple and pass through nodeInspection — currently every render of ChainInspector + every chain-stat compute recomputes reach.",
+    "store.js commitChainEdge returns {ok,reason} but the caller in ChainAuthoring.commit maps reason→toast. Good. However deleteChainNode silently no-ops on missing node and the rewire branch can theoretically add MANY edges (P*S can be quadratic). Add a soft cap (e.g., refuse rewire if P*S > 256) with a toast.",
+    "codec.js encodeState always emits cn/ce fields even when empty arrays — minor base64 size waste. Strip empty arrays before encoding to keep share-links shorter.",
+    "ColumnChainStudio.jsx ChainGraphInner.useEffect schedules fitView via setTimeout(80) on every laidOut.length or rfEdges.length change — could cause jank during rapid edge commits. Consider requestAnimationFrame instead.",
+    "codec.js b64urlEncode uses deprecated unescape/escape (works but flagged by lint). Migrate to TextEncoder/TextDecoder + Uint8Array for UTF-8 safety.",
+    "Studio.jsx share modal Stat re-imports the same Stat sub-component name as defined in ColumnChainStudio.jsx — not a bug (module-scoped) but a naming-collision risk if files are merged later."
+  ],
+  "updated_files": [
+    "/app/frontend/src/studio/__tests__/chain_pure.test.mjs (new)"
+  ],
+  "success_rate": { "backend": "n/a (frontend-only iteration)", "frontend": "100% — all 14 spec items verified" },
+  "test_credentials": "admin@delaybridge.io / DelayBridge#2026 (from /app/memory/test_credentials.md). Login form has them pre-filled.",
+  "seed_data_creation": "No persistent seed. The Column chain studio is fully client-side; the testing agent injected a synthetic `source` (headers A..E) by navigating to a pre-built share URL `/studio#d=<base64url>` which bypasses the Apps Script fetch step (the codec deserializes `src` into the zustand store on mount).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Column Chain DAG feature is fully working. To inject test data without needing a real Apps Script URL, use a share-link with a synthetic source: encode {v:2, src:{u:'mock', h:['A','B','C','D','E'], r:['r1','r2']}, g:[], e:[], cn:[], ce:[]} as base64url and navigate to /studio#d=<token>. This was the workaround used in this iteration. The 30-test pure script at /app/frontend/src/studio/__tests__/chain_pure.test.mjs can be re-run via `node chain_pure.test.mjs` and is the canonical regression suite for chainGraph.js + codec.js. Sonner toasts may overlap the Share button — wait ~3s before clicking it in automation.",
+  "rca of the issue": "No bugs found in this iteration. The single test-flake (share modal click timing out) was caused by sonner toast container overlapping the topbar Share-link button at the moment of click — repro: rapid-fire commit/rewire toasts within 3s before clicking Share. Mitigation: relocate toasts (bottom-right) or shorten duration to ≤1.5s."
+}
