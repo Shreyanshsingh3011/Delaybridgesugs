@@ -177,3 +177,22 @@ dependencies — fully client-side, encoded into the same Base64URL share link.
 - 30/30 pure-algorithm tests pass
 - 14/14 UI spec items pass (cycle prevention, rewire, round-trip, etc.)
 - No critical regressions
+
+### Phase 1D.1 — Frontend Export (2026-02-25)
+
+Stateless export of the resolved chain to **any** external frontend (Lovable / Bubble / plain React).
+
+**Backend**
+- `GET /api/studio/resolve?d=<base64url-token>` (public, no auth — the token is the auth):
+  decodes the share token (v1 OR v2), derives full transitive closure, and emits:
+  `{ version, source, edges, chain: { nodes, directEdges, skipEdges, transitive, topoOrder, isDAG, stats } }`.
+  Verified via curl: v=2 chain `A→B→C, A⤳C` correctly resolves descendants/ancestors and topoOrder.
+
+**Frontend**
+- New header button `Export to frontend` (next to Reset / Share link) opens a modal mounting
+  `/app/frontend/src/studio/StudioExportPanel.jsx`.
+- The panel exposes:
+  - Resolve URL (copyable)
+  - Lovable / Vanilla JS / cURL / Schema snippets (tabbed)
+  - One-click **Download JSON** of the resolved chain
+  - **Preview resolved** modal showing the server response live

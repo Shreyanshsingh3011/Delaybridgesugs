@@ -9,9 +9,10 @@ import Graph from "../studio/Graph";
 import EdgeList from "../studio/EdgeList";
 import ColumnDependencyWizard from "../studio/ColumnDependencyWizard";
 import ColumnChainStudio from "../studio/ColumnChainStudio";
+import StudioExportPanel from "../studio/StudioExportPanel";
 import {
   ChevronLeft, Link2, Loader2, Workflow, Copy, Check, RefreshCw,
-  Share2, X, Eye, Wand2, Hand, Network,
+  Share2, X, Eye, Wand2, Hand, Network, Sparkles,
 } from "lucide-react";
 
 export default function Studio() {
@@ -27,6 +28,7 @@ export default function Studio() {
   const [copied, setCopied] = useState(false);
   const [authoringMode, setAuthoringMode] = useState("wizard"); // 'wizard' | 'generic'
   const [studioTab, setStudioTab] = useState("resolver"); // 'resolver' | 'chains'
+  const [exportOpen, setExportOpen] = useState(false);
 
   // Restore from URL fragment on mount
   useEffect(() => {
@@ -100,6 +102,11 @@ export default function Studio() {
         <button data-testid="studio-reset-button" onClick={() => { if (confirm("Reset everything?")) resetAll(); }}
                 className="db-btn db-btn-ghost py-1 px-2 text-xs">
           <RefreshCw className="w-3.5 h-3.5" /> Reset
+        </button>
+        <button data-testid="studio-export-button" onClick={() => setExportOpen(true)}
+                className="db-btn db-btn-ghost py-1 px-2 text-xs"
+                style={{ borderColor: "rgba(0,170,255,0.35)", color: "#6cd0ff" }}>
+          <Sparkles className="w-3.5 h-3.5" /> Export to frontend
         </button>
         <button data-testid="studio-share-button" onClick={() => setShareOpen(true)}
                 className="db-btn">
@@ -250,6 +257,30 @@ export default function Studio() {
                 {JSON.stringify({ source, groups, edges, chainNodes, chainEdges }, null, 2)}
               </pre>
             </details>
+          </div>
+        </div>
+      )}
+      {/* Export modal */}
+      {exportOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center px-4"
+             style={{ background: "rgba(7,7,14,0.6)", backdropFilter: "blur(6px)" }}
+             onClick={() => setExportOpen(false)}
+             data-testid="studio-export-modal">
+          <div className="db-card p-0 w-full max-w-md max-h-[88vh] overflow-hidden flex flex-col"
+               onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b db-divider flex items-center gap-2">
+              <Sparkles className="w-4 h-4 db-accent" />
+              <div className="text-sm font-semibold">Export resolved chain to your frontend</div>
+              <div className="flex-1"></div>
+              <button onClick={() => setExportOpen(false)}
+                      data-testid="studio-export-close"
+                      className="db-btn db-btn-ghost py-1 px-2 text-xs">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              <StudioExportPanel />
+            </div>
           </div>
         </div>
       )}
