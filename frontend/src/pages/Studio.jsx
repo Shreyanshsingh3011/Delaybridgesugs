@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, formatErr } from "../api";
 import { useStudio } from "../studio/store";
 import { buildShareUrl, readHashState, clearHash } from "../studio/codec";
+import { safeCopy } from "../lib/clipboard";
 import Palette from "../studio/Palette";
 import Graph from "../studio/Graph";
 import EdgeList from "../studio/EdgeList";
@@ -65,7 +66,8 @@ export default function Studio() {
   };
 
   const copyShare = async () => {
-    await navigator.clipboard.writeText(shareUrl);
+    const r = await safeCopy(shareUrl);
+    if (!r.ok) { toast.error("Copy blocked — select the text and copy manually"); return; }
     setCopied(true); setTimeout(() => setCopied(false), 1400);
     toast.success("Share link copied — the link IS the logic");
   };

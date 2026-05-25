@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useStudio } from "./store";
 import { encodeState } from "./codec";
+import { safeCopy } from "../lib/clipboard";
 import {
   Download, Copy, Check, Link2, Code2, Terminal, Sparkles, FileJson, Eye,
 } from "lucide-react";
@@ -23,7 +24,11 @@ export default function StudioExportPanel() {
   const resolveUrl = `${API_BASE}/api/studio/resolve?d=${token}`;
 
   const copy = async (key, value) => {
-    await navigator.clipboard.writeText(value);
+    const r = await safeCopy(value);
+    if (!r.ok) {
+      toast.error(`Copy blocked — select the text and copy manually`);
+      return;
+    }
     setCopied(key);
     setTimeout(() => setCopied(""), 1400);
     toast.success("Copied");

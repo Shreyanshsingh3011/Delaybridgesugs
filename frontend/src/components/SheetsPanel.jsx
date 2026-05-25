@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { api, formatErr } from "../api";
+import { safeCopy } from "../lib/clipboard";
 import {
   RefreshCw, Plus, Trash2, Copy, ChevronRight, Check, X,
   HelpCircle, Database, ChevronDown, Loader2,
@@ -78,8 +79,9 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
   };
 
   const copyCode = async () => {
-    await navigator.clipboard.writeText(APPS_SCRIPT_CODE);
-    toast.success("Apps Script code copied");
+    const r = await safeCopy(APPS_SCRIPT_CODE);
+    if (r.ok) toast.success("Apps Script code copied");
+    else toast.error("Copy blocked — select the code and copy manually");
   };
 
   const nextEmptyLabel = LABEL_ORDER.find((L) => !sheetsByLabel[L] && !revealed.has(L));

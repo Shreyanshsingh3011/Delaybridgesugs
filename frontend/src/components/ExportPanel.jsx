@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PUBLIC_BASE } from "../api";
+import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
   Check, Globe, FileJson,
@@ -49,14 +50,14 @@ export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
   useEffect(() => { fetchPreview(); /* eslint-disable-next-line */ }, [composedUrl]);
 
   const copy = async (url, key) => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopiedKey(key);
-      toast.success("Copied to clipboard");
-      setTimeout(() => setCopiedKey(null), 1500);
-    } catch {
+    const r = await safeCopy(url);
+    if (!r.ok) {
       toast.error("Clipboard blocked — long-press the field to copy manually");
+      return;
     }
+    setCopiedKey(key);
+    toast.success("Copied to clipboard");
+    setTimeout(() => setCopiedKey(null), 1500);
   };
 
   const lovableSnippet = useMemo(() => `// Lovable / any React app
