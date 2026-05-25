@@ -147,3 +147,33 @@ Analytics include:
 - Public viewer with editable-mode write-back via PUT
 - Export PNG / SVG / JSON
 - Live scores + insights + analytics summary updating with each change
+
+---
+
+## Phase 1D — Column Dependency Chaining Subsystem (2026-02-25)
+
+A second tab inside `/studio` ("Column chain DAG") for authoring **DAG-of-columnId**
+dependencies — fully client-side, encoded into the same Base64URL share link.
+
+### Files
+- `/app/frontend/src/studio/chainGraph.js` — pure algorithms (buildReach, wouldCreateCycle, nodeInspection, topoSort, computeRewire, withoutNode, upsertEdge)
+- `/app/frontend/src/studio/ColumnChainStudio.jsx` — 3-panel UI (authoring · graph · inspector)
+- `/app/frontend/src/studio/store.js` — `chainNodes`, `chainEdges`, `chainSelected` slice with `commitChainEdge`, `deleteChainEdge`, `deleteChainNode(mode)`, `addChainNodes`, `selectChainNode`, `resetChains`
+- `/app/frontend/src/studio/codec.js` — bumped VERSION=2; encodes only `direct` + `skip` edges (transitive re-derived on import); decoder accepts v=1 or v=2 (backwards compatible)
+- `/app/frontend/src/pages/Studio.jsx` — tab switcher Resolver ↔ Chain DAG; share modal now exposes chain stats and raw payload
+
+### Capabilities
+- DAG nodes = columnIds; edges have kind ∈ {`direct`, `skip`}
+- **Transitive Inference Engine**: reachability index built on-the-fly; transitive edges never stored, never drawn
+- **Cycle prevention** at commit-time with explicit toast feedback
+- **Duplicate** and **self-loop** prevention
+- **Inspector** per node: direct preds/succs, skip in/out, transitive ancestors/descendants, topo order, incident-edge list
+- **Intermediate node deletion** with 2 strategies:
+  - Disconnect — drops all incident edges
+  - Rewire — inserts P×S new direct edges (Cartesian product of direct predecessors × direct successors) then drops the node
+- **Lossless serialization** into Base64URL share link
+
+### Verified by `/app/test_reports/iteration_4.json`
+- 30/30 pure-algorithm tests pass
+- 14/14 UI spec items pass (cycle prevention, rewire, round-trip, etc.)
+- No critical regressions

@@ -36,7 +36,7 @@ function App() {
 
   return (
     <div className="App">
-      <Toaster position="top-right" theme="dark"
+      <Toaster position="bottom-right" theme="dark" duration={2000}
                toastOptions={{ style: { background: "#0e0e1a", border: "1px solid #1f1f3a", color: "#e7e8ee", fontFamily: "IBM Plex Mono, monospace", fontSize: 12 } }} />
       <BrowserRouter>
         <Routes>
