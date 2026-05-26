@@ -30,6 +30,48 @@ def _row_id(idx: int, raw: Dict[str, Any]) -> str:
     return f"r{idx}"
 
 
+_MOCK_HEADERS = [
+    "Task ID", "Task Name", "Owner", "Department",
+    "Permit Issued", "Material Ordered", "Material Delivered",
+    "Foundation Cast", "Wall Erection", "Roofing",
+    "Electrical Wiring", "Plumbing", "Plastering",
+    "Inspection", "Handover",
+]
+
+_MOCK_ROWS = [
+    {"Task ID": "T01", "Task Name": "North wing — foundation",   "Owner": "R. Sharma", "Department": "Civil",
+     "Permit Issued": "2026-01-08", "Material Ordered": "2026-01-10", "Material Delivered": "2026-01-18",
+     "Foundation Cast": "2026-01-25", "Wall Erection": "2026-02-04", "Roofing": "2026-02-18",
+     "Electrical Wiring": "2026-02-22", "Plumbing": "2026-02-23", "Plastering": "2026-03-01",
+     "Inspection": "2026-03-08", "Handover": "2026-03-12"},
+    {"Task ID": "T02", "Task Name": "South wing — foundation",   "Owner": "A. Verma",  "Department": "Civil",
+     "Permit Issued": "2026-01-10", "Material Ordered": "2026-01-12", "Material Delivered": "2026-01-22",
+     "Foundation Cast": "2026-01-28", "Wall Erection": "2026-02-08", "Roofing": "2026-02-21",
+     "Electrical Wiring": "2026-02-26", "Plumbing": "2026-02-27", "Plastering": "2026-03-05",
+     "Inspection": "2026-03-12", "Handover": "2026-03-16"},
+    {"Task ID": "T03", "Task Name": "East tower — slab L1",      "Owner": "S. Iyer",   "Department": "Civil",
+     "Permit Issued": "2026-01-15", "Material Ordered": "2026-01-17", "Material Delivered": "2026-01-27",
+     "Foundation Cast": "2026-02-02", "Wall Erection": "2026-02-12", "Roofing": "2026-02-28",
+     "Electrical Wiring": "2026-03-04", "Plumbing": "2026-03-05", "Plastering": "2026-03-12",
+     "Inspection": "2026-03-19", "Handover": "2026-03-23"},
+    {"Task ID": "T04", "Task Name": "West tower — slab L1",      "Owner": "P. Joshi",  "Department": "Civil",
+     "Permit Issued": "2026-01-18", "Material Ordered": "2026-01-20", "Material Delivered": "2026-01-30",
+     "Foundation Cast": "2026-02-06", "Wall Erection": "2026-02-16", "Roofing": "2026-03-02",
+     "Electrical Wiring": "2026-03-08", "Plumbing": "2026-03-09", "Plastering": "2026-03-16",
+     "Inspection": "2026-03-23", "Handover": "2026-03-27"},
+    {"Task ID": "T05", "Task Name": "Clubhouse — civil",         "Owner": "M. Khan",   "Department": "Civil",
+     "Permit Issued": "2026-01-22", "Material Ordered": "2026-01-25", "Material Delivered": "2026-02-04",
+     "Foundation Cast": "2026-02-10", "Wall Erection": "2026-02-20", "Roofing": "2026-03-06",
+     "Electrical Wiring": "2026-03-11", "Plumbing": "2026-03-12", "Plastering": "2026-03-19",
+     "Inspection": "2026-03-26", "Handover": "2026-03-30"},
+    {"Task ID": "T06", "Task Name": "Parking deck",              "Owner": "K. Bose",   "Department": "Civil",
+     "Permit Issued": "2026-01-25", "Material Ordered": "2026-01-28", "Material Delivered": "2026-02-07",
+     "Foundation Cast": "2026-02-13", "Wall Erection": "2026-02-23", "Roofing": "2026-03-09",
+     "Electrical Wiring": "2026-03-15", "Plumbing": "2026-03-16", "Plastering": "2026-03-23",
+     "Inspection": "2026-03-30", "Handover": "2026-04-03"},
+]
+
+
 @router.post("/fetch")
 async def studio_fetch(payload: FetchRequest, current=Depends(get_current_user)):
     """Fetch records from an Apps Script Web App URL.
@@ -39,7 +81,14 @@ async def studio_fetch(payload: FetchRequest, current=Depends(get_current_user))
       - rowIds:     ordinal row identifiers (row index namespace)
       - rowCount:   convenience integer
     """
-    ok, msg, rows = fetch_apps_script(payload.url)
+    # Short-circuit when the URL points to our own mock endpoint — saves a
+    # k8s loopback request that the ingress routinely refuses.
+    if payload.url.rstrip("/").endswith("/api/studio/_mock_sheet"):
+        rows = list(_MOCK_ROWS)
+        msg = f"Mock sheet — {len(rows)} rows."
+        ok = True
+    else:
+        ok, msg, rows = fetch_apps_script(payload.url)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
 
@@ -74,6 +123,18 @@ async def studio_fetch(payload: FetchRequest, current=Depends(get_current_user))
         "rowCount": len(row_ids),
         "message": msg,
     }
+
+
+# ---------------------------------------------------------------------------
+# Demo Apps Script-style endpoint. Mirrors the JSON shape an Apps Script Web
+# App returns for a realistic construction-project sheet. Public, GET, no auth.
+# Use this URL as input to /api/studio/fetch when you don't have a real sheet.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/_mock_sheet")
+async def studio_mock_sheet():
+    return {"status": "ok", "data": _MOCK_ROWS, "headers": _MOCK_HEADERS, "rowCount": len(_MOCK_ROWS)}
 
 
 # ---------------------------------------------------------------------------
