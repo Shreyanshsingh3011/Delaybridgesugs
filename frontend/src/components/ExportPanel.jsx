@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
 import { PUBLIC_BASE } from "../api";
 import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
-  Check, Globe, FileJson,
+  Check, Globe, FileJson, LayoutDashboard,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
   { key: "full", label: "Full analysis JSON", path: "" },
+  { key: "dashboard", label: "Data dashboard", path: "/dashboard" },
   { key: "flags", label: "Flags only", path: "/flags" },
   { key: "variances", label: "Variances only", path: "/variances" },
   { key: "correlations", label: "Correlations", path: "/correlations" },
@@ -18,8 +22,10 @@ const SLICE_ENDPOINTS = [
   { key: "chat-suggestions", label: "Chat suggestions", path: "/chat/suggestions" },
 ];
 
+const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
+
 function tabs() {
-  return ["link", "preview", "snippets"];
+  return ["link", "dashboard", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -33,6 +39,24 @@ export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState(null);
   const [tab, setTab] = useState("link");
+  const [dash, setDash] = useState(null);
+  const [dashErr, setDashErr] = useState(null);
+  const [dashLoading, setDashLoading] = useState(false);
+
+  const fetchDashboard = async () => {
+    setDashLoading(true);
+    setDashErr(null);
+    try {
+      const r = await fetch(`${baseUrl}/dashboard`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      setDash(j);
+    } catch (e) {
+      setDashErr(e.message);
+    } finally { setDashLoading(false); }
+  };
+
+  useEffect(() => { if (tab === "dashboard" && !dash && !dashLoading) fetchDashboard(); /* eslint-disable-next-line */ }, [tab]);
 
   const fetchPreview = async () => {
     setPreviewLoading(true);
@@ -126,7 +150,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -149,6 +173,10 @@ function getDelayBridgeData() {
               );
             })}
           </div>
+        )}
+
+        {tab === "dashboard" && (
+          <DashboardView data={dash} loading={dashLoading} err={dashErr} onRefresh={fetchDashboard} />
         )}
 
         {tab === "preview" && (
@@ -216,6 +244,107 @@ function getDelayBridgeData() {
           Paste this URL into Lovable → fetch() and you’re done.
         </div>
       </div>
+    </div>
+  );
+}
+
+function DashboardView({ data, loading, err, onRefresh }) {
+  if (loading) return <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Loading dashboard…</div>;
+  if (err) return <div className="db-danger text-sm mono">Error: {err}</div>;
+  if (!data) return null;
+  if (data.enabled === false) {
+    return (
+      <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+        The data dashboard isn’t enabled for this export. Go back to Configure and turn on
+        <span className="db-accent"> Sheet data dashboard</span>.
+      </div>
+    );
+  }
+  const sheets = data.sheets || [];
+  if (!sheets.length) {
+    return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>No connected sheets to visualize yet.</div>;
+  }
+  return (
+    <div className="space-y-8" data-testid="dashboard-tab">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] mono uppercase tracking-wider flex items-center gap-2"
+             style={{ color: "var(--db-muted)" }}>
+          <LayoutDashboard className="w-3.5 h-3.5 db-accent" /> {data.project || "Dashboard"} · {sheets.length} sheet(s)
+        </div>
+        <button onClick={onRefresh} className="db-btn db-btn-ghost"><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
+      </div>
+
+      {sheets.map((s) => (
+        <div key={s.label} className="space-y-4">
+          <div className="flex items-center gap-2">
+            <span className={`db-chip db-chip-${s.color || "blue"}`}>{s.label}</span>
+            <span className="text-sm font-medium">{s.name}</span>
+            <span className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>{s.row_count} rows</span>
+          </div>
+
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {(s.kpis || []).map((k, i) => (
+              <div key={i} className="db-card p-4">
+                <div className="text-[10px] mono uppercase tracking-wider" style={{ color: "var(--db-muted)" }}>{k.label}</div>
+                <div className="db-tabular-num mono text-2xl mt-1">{typeof k.value === "number" ? k.value.toLocaleString() : k.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Charts */}
+          {(s.charts || []).length > 0 && (
+            <div className="grid md:grid-cols-2 gap-4">
+              {s.charts.map((c, i) => (
+                <div key={i} className="db-card p-4">
+                  <div className="text-sm font-medium mb-3">{c.title}</div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={c.data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={50} />
+                      <YAxis tick={{ fontSize: 11 }} width={40} />
+                      <Tooltip />
+                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                        {c.data.map((_, idx) => <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Data table */}
+          <div className="db-card p-0 overflow-auto max-h-[420px]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  {(s.columns || []).map((col) => (
+                    <th key={col.name} className="text-left px-3 py-2 sticky top-0"
+                        style={{ background: "var(--db-bg, #0d1117)", color: "var(--db-muted)", fontWeight: 600 }}>
+                      {col.name}
+                      <span className="ml-1 text-[9px] mono opacity-60">{col.type}</span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(s.rows || []).slice(0, 100).map((row, ri) => (
+                  <tr key={ri} className="border-t" style={{ borderColor: "var(--db-border, #222)" }}>
+                    {(s.columns || []).map((col) => (
+                      <td key={col.name} className="px-3 py-1.5 whitespace-nowrap">{String(row[col.name] ?? "")}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {s.truncated && (
+            <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
+              Showing first rows · full data available via the /dashboard endpoint.
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

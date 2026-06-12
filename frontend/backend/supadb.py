@@ -62,6 +62,14 @@ def _match(doc, flt):
     for k, v in flt.items():
         if isinstance(v, (dict, list)):
             continue  # operator/complex filters not used for matching here
+        if "." in k:
+            head, rest = k.split(".", 1)
+            arr = doc.get(head)
+            if isinstance(arr, list):
+                # array filter: match if any element's sub-path equals v (e.g. "sheets.label")
+                if not any(isinstance(el, dict) and str(_get_path(el, rest)) == str(v) for el in arr):
+                    return False
+                continue
         if str(_get_path(doc, k)) != str(v):
             return False
     return True
@@ -109,6 +117,51 @@ def _apply_update(doc, update):
 class _Result:
     def __init__(self, **kw):
         self.__dict__.update(kw)
+
+
+def _strip_positional(update):
+    """Return a copy of `update` with positional ($) $set keys removed."""
+    if "$set" not in update:
+        return update
+    out = {k: v for k, v in update.items() if k != "$set"}
+    rest = {k: v for k, v in update["$set"].items() if ".$." not in k}
+    if rest:
+        out["$set"] = rest
+    return out
+
+
+def _apply_positional(doc, flt, update):
+    """Apply Mongo positional array updates like {"$set": {"sheets.$.rows": n}} where the
+    matched array element is selected by an array filter in `flt` like {"sheets.label": "A"}."""
+    out = dict(doc or {})
+    set_ops = update.get("$set", {})
+    positional = {k: v for k, v in set_ops.items() if ".$." in k}
+    if not positional:
+        return out
+    arr_name = next(iter(positional)).split(".$.")[0]
+    arr = list(out.get(arr_name) or [])
+    # locate the target element via the array filter in flt (e.g. "sheets.label")
+    idx = None
+    for fk, fv in (flt or {}).items():
+        if fk.startswith(arr_name + ".") and not isinstance(fv, (dict, list)):
+            sub = fk.split(".", 1)[1]
+            for i, el in enumerate(arr):
+                if isinstance(el, dict) and str(el.get(sub)) == str(fv):
+                    idx = i
+                    break
+            break
+    if idx is None:
+        return out
+    el = dict(arr[idx])
+    for k, v in positional.items():
+        field = k.split(".$.", 1)[1]
+        if "." in field:
+            _set_path(el, field, v)
+        else:
+            el[field] = v
+    arr[idx] = el
+    out[arr_name] = arr
+    return out
 
 
 class Cursor:
@@ -193,7 +246,8 @@ class Collection:
         if docs:
             existing = docs[0]
             row_id = str(existing.get(self.key) or existing.get("id"))
-            new_doc = _apply_update(existing, update)
+            new_doc = _apply_positional(existing, flt, update)
+            new_doc = _apply_update(new_doc, _strip_positional(update))
             r = await self.db.client.patch(
                 self._url, params=[("id", f"eq.{row_id}")], json={"data": new_doc},
                 headers=_headers({"Prefer": "return=minimal"}),

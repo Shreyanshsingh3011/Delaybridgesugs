@@ -281,23 +281,27 @@ async def set_mapping(sid: str, label: str, mapping: ColumnMapping, current=Depe
 
 class ExportConfig(BaseModel):
     fields: List[str] = []
+    modules: Optional[Dict[str, Any]] = None
 
 
 @router.get("/sessions/{sid}/export-config")
 async def get_export_config(sid: str, current=Depends(get_current_user)):
     from server import db
     sess = await _get_session(db, sid, current["id"])
-    return {"fields": sess.get("export_fields") or []}
+    return {"fields": sess.get("export_fields") or [], "modules": sess.get("export_modules") or {}}
 
 
 @router.post("/sessions/{sid}/export-config")
 async def set_export_config(sid: str, payload: ExportConfig, current=Depends(get_current_user)):
     from server import db
+    changes = {"export_fields": payload.fields, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if payload.modules is not None:
+        changes["export_modules"] = payload.modules
     await db.sessions.update_one(
         {"id": sid, "owner_id": current["id"]},
-        {"$set": {"export_fields": payload.fields, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": changes},
     )
-    return {"ok": True, "fields": payload.fields}
+    return {"ok": True, "fields": payload.fields, "modules": payload.modules}
 
 
 # -------- Analysis trigger --------

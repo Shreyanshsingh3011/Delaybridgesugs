@@ -40,6 +40,13 @@ const FIELD_GROUPS = [
       { key: "flags", label: "Flags array", hint: "Auto-generated delay + variance flags with downstream people" },
     ],
   },
+  {
+    name: "Dynamic dashboard",
+    icon: Activity,
+    fields: [
+      { key: "data_dashboard", label: "Sheet data dashboard", hint: "Auto KPIs, charts & a data table built from your raw sheet rows" },
+    ],
+  },
 ];
 
 export default function ConfigPanel({

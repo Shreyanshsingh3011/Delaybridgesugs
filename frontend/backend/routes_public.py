@@ -126,6 +126,22 @@ async def get_dependencies(token: str):
     return analysis.get("dependency_chains") or {}
 
 
+@router.get("/{token}/dashboard")
+async def get_dashboard(token: str):
+    """Generic data dashboard built from the raw sheet rows (auto KPIs/charts/table).
+    Enabled when 'data_dashboard' is selected in configure-export (or no field filter set)."""
+    from server import db
+    from dashboards import build_data_dashboard
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    enabled = (not fields) or ("data_dashboard" in fields)
+    if not enabled:
+        return {"enabled": False, "message": "Data dashboard module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    dash = build_data_dashboard(sheets)
+    return {"enabled": True, "project": sess.get("name"), **dash}
+
+
 # -------- Composable export --------
 EXPORT_FIELDS = [
     "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",
