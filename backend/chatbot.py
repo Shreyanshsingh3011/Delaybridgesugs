@@ -1,17 +1,16 @@
-"""Chatbot — Anthropic Claude via Emergent Universal LLM Key.
-Admin/Analyst mode and Dependent Person mode."""
+"""Chatbot — optional. Uses Anthropic's public API directly when ANTHROPIC_API_KEY is
+set; otherwise returns a graceful 'disabled' message. (The original Emergent Universal
+LLM integration is not available outside the Emergent platform.)"""
 import os
 import json
 import logging
 from typing import Optional, Dict, Any, List
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+import requests
 
 logger = logging.getLogger(__name__)
 
-# Per user request: claude-sonnet-4-20250514. The current emergentintegrations supports
-# claude-sonnet-4-5-20250929 from the Claude 4 family. We map to the closest available.
-CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+CLAUDE_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 
 ADMIN_SUGGESTIONS = [
     "What is the current risk score and why?",
@@ -114,10 +113,34 @@ async def chat_send(
     system_prompt: str,
     message: str,
 ) -> str:
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=session_id,
-        system_message=system_prompt,
-    ).with_model("anthropic", CLAUDE_MODEL)
-    resp = await chat.send_message(UserMessage(text=message))
-    return resp
+    # Prefer an explicit Anthropic key from the environment; fall back to the passed key.
+    key = os.environ.get("ANTHROPIC_API_KEY") or (api_key if api_key and api_key.startswith("sk-") else "")
+    if not key:
+        return (
+            "AI chat is disabled in this deployment. To enable it, set an "
+            "ANTHROPIC_API_KEY environment variable on the server. All other "
+            "analytics (flags, variances, dependencies, downstream impact) work normally."
+        )
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": CLAUDE_MODEL,
+                "max_tokens": 1024,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": message}],
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+        return "\n".join(p for p in parts if p).strip() or "(no response)"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("chat_send failed: %s", e)
+        return "AI chat is temporarily unavailable. Please try again later."

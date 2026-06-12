@@ -313,9 +313,8 @@ async def chat(token: str, payload: ChatRequest):
     from server import db
     sess = await _get_by_token(db, token)
     analysis = _ensure_analysis(sess)
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured.")
+    api_key = os.environ.get("EMERGENT_LLM_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
+    # No hard failure if unset — chat_send returns a graceful 'disabled' message.
 
     chat_session_id = payload.session_id or str(uuid.uuid4())
     rows = analysis.get("primary_rows", [])

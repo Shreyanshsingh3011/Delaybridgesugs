@@ -9,7 +9,8 @@ import os
 import logging
 from fastapi import FastAPI, APIRouter
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+
+from supadb import SupaDB
 
 from auth import seed_admin
 
@@ -22,10 +23,8 @@ from routes_studio import router as studio_router
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("delaybridge")
 
-# MongoDB connection
-mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
+# Database connection (Supabase via a MongoDB-compatible adapter)
+db = SupaDB()
 
 
 app = FastAPI(title="DelayBridge API", version="0.1.0")
@@ -103,4 +102,4 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    client.close()
+    await db.aclose()

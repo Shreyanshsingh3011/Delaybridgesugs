@@ -53,7 +53,10 @@ def decode_token(token: str) -> dict:
 
 
 async def get_current_user(request: Request) -> dict:
-    """Extract token from cookie or Authorization Bearer header; verify and return user."""
+    """LOGIN BYPASS: authentication is disabled for this deployment. Every request is
+    treated as the single shared admin workspace, so the app is fully usable with no
+    sign-in. If a valid Bearer/cookie token is present it is honored; otherwise we fall
+    back to the demo admin."""
     from server import db  # local import to avoid cycle
 
     token = request.cookies.get("access_token")
@@ -61,20 +64,22 @@ async def get_current_user(request: Request) -> dict:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = decode_token(token)
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    if token:
+        try:
+            payload = decode_token(token)
+            if payload.get("type") == "access":
+                user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+                if user:
+                    return user
+        except Exception:
+            pass
+    # Fallback shared admin workspace (stable id so all data is scoped consistently).
+    return {
+        "id": "admin",
+        "email": os.environ.get("ADMIN_EMAIL", "admin@delaybridge.io").lower(),
+        "name": "DelayBridge Admin",
+        "role": "admin",
+    }
 
 
 async def seed_admin(db) -> None:
