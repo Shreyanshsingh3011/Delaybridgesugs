@@ -7,7 +7,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import logging
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Request, HTTPException
 from starlette.middleware.cors import CORSMiddleware
 
 from supadb import SupaDB
@@ -66,6 +66,30 @@ async def root():
 @health_router.get("/health")
 async def health():
     return {"ok": True}
+
+
+@health_router.get("/cron/snapshot")
+async def cron_snapshot(request: Request):
+    """Daily Vercel Cron target: captures a snapshot for every export that has connected
+    sheets, so Trends accrues history automatically. Protected by CRON_SECRET if set."""
+    secret = os.environ.get("CRON_SECRET")
+    if secret:
+        if request.headers.get("authorization", "") != f"Bearer {secret}":
+            raise HTTPException(status_code=403, detail="Forbidden")
+    from routes_public import _capture_snapshot
+    sessions = []
+    async for s in db.sessions.find({}):
+        sessions.append(s)
+    count = 0
+    for sess in sessions:
+        sheets = [sh for sh in (sess.get("sheets") or []) if sh.get("connected")]
+        token = sess.get("public_token")
+        if not sheets or not token:
+            continue
+        await _capture_snapshot(db, token, sess, sheets)
+        count += 1
+    logger.info("cron snapshot captured for %d exports", count)
+    return {"ok": True, "snapshotted": count}
 
 
 app.include_router(health_router)
