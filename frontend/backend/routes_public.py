@@ -203,6 +203,49 @@ async def get_anomalies(token: str, column: Optional[str] = None, sensitivity: s
     return build_anomalies(sheets, column=column, sensitivity=sensitivity, sheet_label=sheet)
 
 
+@router.get("/{token}/digest")
+async def get_digest(token: str):
+    """Executive summary computed from the data; AI-polished into prose when a key is set.
+    Enabled via 'digest'."""
+    from server import db
+    from insights import build_digest
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("digest" in fields)):
+        return {"enabled": False, "message": "Digest module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    digest = build_digest(sheets)
+    generated_by = "computed"
+    summary = " ".join(digest.get("facts", [])[:8])
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("EMERGENT_LLM_KEY") or ""
+    if api_key and digest.get("facts"):
+        try:
+            sys_prompt = ("Turn these computed dataset facts into a crisp 3-4 sentence executive summary "
+                          "for a manager. Use only these facts; do not invent numbers.\n\n- " +
+                          "\n- ".join(digest["facts"]))
+            polished = await chat_send(api_key, str(uuid.uuid4()), sys_prompt, "Write the executive summary.")
+            if polished and "disabled" not in polished.lower():
+                summary = polished
+                generated_by = "ai"
+        except Exception:
+            pass
+    return {"enabled": True, "project": sess.get("name"), "generated_by": generated_by,
+            "summary": summary, **digest}
+
+
+@router.get("/{token}/recommendations")
+async def get_recommendations(token: str):
+    """Rule-based next-best-actions from quality + anomaly signals. Enabled via 'recommendations'."""
+    from server import db
+    from insights import build_recommendations
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("recommendations" in fields)):
+        return {"enabled": False, "message": "Recommendations module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    return {"enabled": True, "project": sess.get("name"), **build_recommendations(sheets)}
+
+
 # -------- Composable export --------
 EXPORT_FIELDS = [
     "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",

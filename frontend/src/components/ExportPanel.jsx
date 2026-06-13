@@ -9,6 +9,7 @@ import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
   Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp, AlertTriangle,
+  FileText, Lightbulb,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
@@ -17,6 +18,8 @@ const SLICE_ENDPOINTS = [
   { key: "pivot", label: "Pivot / segmentation", path: "/pivot" },
   { key: "forecast", label: "Forecast", path: "/forecast" },
   { key: "anomalies", label: "Anomaly detection", path: "/anomalies" },
+  { key: "digest", label: "Auto-digest", path: "/digest" },
+  { key: "recommendations", label: "Recommendations", path: "/recommendations" },
   { key: "quality", label: "Data-quality audit", path: "/quality" },
   { key: "flags", label: "Flags only", path: "/flags" },
   { key: "variances", label: "Variances only", path: "/variances" },
@@ -30,7 +33,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "pivot", "forecast", "anomalies", "quality", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "digest", "pivot", "forecast", "anomalies", "recommendations", "quality", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -155,7 +158,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "anomalies" ? "Anomalies" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -182,6 +185,14 @@ function getDelayBridgeData() {
 
         {tab === "copilot" && (
           <CopilotView baseUrl={baseUrl} />
+        )}
+
+        {tab === "digest" && (
+          <DigestView baseUrl={baseUrl} />
+        )}
+
+        {tab === "recommendations" && (
+          <RecommendationsView baseUrl={baseUrl} />
         )}
 
         {tab === "anomalies" && (
@@ -456,6 +467,83 @@ function CopilotView({ baseUrl }) {
       <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
         Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
       </div>
+    </div>
+  );
+}
+
+function DigestView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setErr(null);
+      try { const r = await fetch(`${baseUrl}/digest`); setData(await r.json()); }
+      catch (e) { setErr(e.message); } finally { setLoading(false); }
+    })();
+  }, [baseUrl]);
+  if (loading) return <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Summarizing…</div>;
+  if (err) return <div className="db-danger text-sm mono">Error: {err}</div>;
+  if (!data) return null;
+  if (data.enabled === false) return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+    Digest isn’t enabled. Enable <span className="db-accent">Auto-digest</span> in Configure.
+  </div>;
+  return (
+    <div className="space-y-4" data-testid="digest-tab">
+      <div className="db-card p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <FileText className="w-4 h-4 db-accent" />
+          <div className="text-sm font-semibold">Executive summary</div>
+          <span className="db-chip db-chip-grey ml-auto">{data.generated_by === "ai" ? "AI-written" : "computed"}</span>
+        </div>
+        <p className="text-sm leading-relaxed">{data.summary}</p>
+      </div>
+      {(data.sheets || []).map((s) => (
+        <div key={s.label} className="db-card p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="db-chip db-chip-blue">{s.label}</span>
+            <span className="text-sm font-medium">{s.name}</span>
+          </div>
+          <ul className="text-sm space-y-1" style={{ listStyle: "disc", paddingLeft: 18 }}>
+            {(s.highlights || []).map((h, i) => <li key={i}>{h}</li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RecommendationsView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setErr(null);
+      try { const r = await fetch(`${baseUrl}/recommendations`); setData(await r.json()); }
+      catch (e) { setErr(e.message); } finally { setLoading(false); }
+    })();
+  }, [baseUrl]);
+  if (loading) return <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Analyzing…</div>;
+  if (err) return <div className="db-danger text-sm mono">Error: {err}</div>;
+  if (!data) return null;
+  if (data.enabled === false) return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+    Recommendations isn’t enabled. Enable <span className="db-accent">Recommendations</span> in Configure.
+  </div>;
+  const recs = data.recommendations || [];
+  const sevColor = (s) => s === "high" ? "db-danger" : s === "medium" ? "db-warning" : "db-success";
+  return (
+    <div className="space-y-3" data-testid="recommendations-tab">
+      {recs.length === 0 && <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>No recommendations — data looks clean.</div>}
+      {recs.map((r, i) => (
+        <div key={i} className="db-card p-4 flex items-start gap-3">
+          <Lightbulb className={`w-4 h-4 mt-0.5 ${sevColor(r.severity)}`} />
+          <div>
+            <div className="text-sm font-medium">{r.title} <span className={`db-chip db-chip-grey ml-1`} style={{ fontSize: 10 }}>{r.severity}</span></div>
+            <div className="text-[13px]" style={{ color: "var(--db-muted)" }}>{r.detail}</div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

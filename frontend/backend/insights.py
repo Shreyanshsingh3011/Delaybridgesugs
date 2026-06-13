@@ -216,3 +216,84 @@ def build_anomalies(sheets: List[Dict[str, Any]], column: Optional[str] = None,
         "available_columns": numeric, "available_sheets": [s.get("label") for s in sheets],
         "count": len(anomalies), "anomalies": anomalies[:100],
     }
+
+
+def _fmt(n):
+    try:
+        return f"{round(float(n), 2):,}"
+    except Exception:
+        return str(n)
+
+
+def build_digest(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Deterministic executive summary computed from the data (no API key needed)."""
+    blocks = []
+    flat = []
+    for s in sheets:
+        all_rows = s.get("rows_raw") or []
+        rows = [r for r in all_rows if not _is_total_row(r)]
+        headers = list(all_rows[0].keys()) if all_rows else (s.get("headers") or [])
+        cols = _infer_columns(all_rows, headers)
+        by_type = defaultdict(list)
+        for c in cols:
+            by_type[c["type"]].append(c["name"])
+        hi = [f"{len(all_rows)} rows across {len(cols)} columns "
+              f"({len(by_type['number'])} numeric, {len(by_type['category'])} categorical, {len(by_type['date'])} date)."]
+        for col in by_type["number"][:2]:
+            tot = sum(_to_number(r.get(col)) or 0 for r in rows)
+            hi.append(f"Total {col} (line items only): {_fmt(tot)}.")
+        if by_type["category"]:
+            cat = by_type["category"][0]
+            cnt = Counter(str(r.get(cat)) for r in rows if r.get(cat) not in (None, ""))
+            if cnt:
+                k, v = cnt.most_common(1)[0]
+                hi.append(f"Most common {cat}: '{k}' ({v} rows).")
+        q = _quality_for_sheet(s)
+        extra = []
+        if q["issues"]["total_subtotal_rows"]:
+            extra.append(f"{q['issues']['total_subtotal_rows']} total/subtotal rows")
+        if q["issues"]["inconsistent_categories"]:
+            extra.append(f"{len(q['issues']['inconsistent_categories'])} columns with casing issues")
+        hi.append(f"Data-quality score: {q['score']}/100" + (f" ({', '.join(extra)})." if extra else "."))
+        an = build_anomalies([s])
+        if an.get("count"):
+            a0 = an["anomalies"][0]
+            hi.append(f"{an['count']} outlier rows (largest: '{a0['label']}' = {_fmt(a0['value'])} in {a0['column']}).")
+        blocks.append({"label": s.get("label"), "name": s.get("name") or s.get("label"), "highlights": hi})
+        flat.extend(hi)
+    return {"sheets": blocks, "facts": flat}
+
+
+def build_recommendations(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Rule-based next-best-actions derived from quality + anomaly signals (no API key)."""
+    recs = []
+    for s in sheets:
+        q = _quality_for_sheet(s)
+        i = q["issues"]
+        if i["total_subtotal_rows"]:
+            recs.append({"severity": "high", "title": "Exclude total/subtotal rows",
+                         "detail": f"{i['total_subtotal_rows']} rows look like totals and inflate sums. "
+                                   "Pivot/forecast already drop them; remove from source for clean dashboards."})
+        for c in i["inconsistent_categories"]:
+            ex = "; ".join(" / ".join(g["variants"][:2]) for g in c["groups"][:3])
+            recs.append({"severity": "medium", "title": f"Normalize casing in '{c['column']}'",
+                         "detail": f"Variants collapse to the same value: {ex}."})
+        for m in i["missing"][:4]:
+            if m["pct"] >= 20:
+                recs.append({"severity": "high" if m["pct"] >= 50 else "medium",
+                             "title": f"High missingness in '{m['column']}'",
+                             "detail": f"{m['pct']}% of rows are empty ({m['missing']} rows)."})
+        for t in i["type_mismatches"]:
+            recs.append({"severity": "medium", "title": f"Non-numeric values in '{t['column']}'",
+                         "detail": f"{t['non_numeric']} values aren't numbers and are excluded from sums."})
+        an = build_anomalies([s])
+        if an.get("count"):
+            a0 = an["anomalies"][0]
+            recs.append({"severity": "low", "title": f"Review {an['count']} outliers",
+                         "detail": f"Largest: '{a0['label']}' = {_fmt(a0['value'])} in {a0['column']} (score {a0['score']})."})
+        if q["score"] >= 90 and not recs:
+            recs.append({"severity": "low", "title": "Data looks clean",
+                         "detail": f"Quality score {q['score']}/100 with no major issues detected."})
+    order = {"high": 0, "medium": 1, "low": 2}
+    recs.sort(key=lambda r: order.get(r["severity"], 3))
+    return {"recommendations": recs}

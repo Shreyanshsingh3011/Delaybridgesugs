@@ -50,17 +50,19 @@ const FIELD_GROUPS = [
       { key: "pivot", label: "Pivot & segmentation", hint: "Group any dimension by sum/avg/count of any measure (excludes total rows)" },
       { key: "forecast", label: "Forecast", hint: "Project a numeric measure over time with P80/P95 bands (needs a date column)" },
       { key: "anomalies", label: "Anomaly detection", hint: "Flags outlier rows in numeric columns (robust median/MAD score)" },
+      { key: "digest", label: "Auto-digest (summary)", hint: "Executive summary of the sheet; AI-polished when an API key is set" },
+      { key: "recommendations", label: "Recommendations", hint: "Next-best-actions from data-quality & anomaly signals" },
     ],
   },
 ];
 
 // One-click domain presets — each switches on a sensible bundle of modules/fields.
 const PRESETS = [
-  { id: "general", name: "General analytics", fields: ["data_dashboard", "data_quality", "pivot", "copilot"] },
-  { id: "finance", name: "Finance", fields: ["data_dashboard", "pivot", "forecast", "data_quality", "copilot"] },
-  { id: "sales", name: "Sales", fields: ["summary", "totals", "data_dashboard", "pivot", "forecast", "copilot"] },
-  { id: "inventory", name: "Inventory / Ops", fields: ["data_dashboard", "pivot", "anomalies", "data_quality", "copilot"] },
-  { id: "support", name: "Support / Tickets", fields: ["data_dashboard", "pivot", "anomalies", "copilot", "data_quality"] },
+  { id: "general", name: "General analytics", fields: ["data_dashboard", "data_quality", "pivot", "digest", "recommendations", "copilot"] },
+  { id: "finance", name: "Finance", fields: ["data_dashboard", "pivot", "forecast", "data_quality", "digest", "copilot"] },
+  { id: "sales", name: "Sales", fields: ["summary", "totals", "data_dashboard", "pivot", "forecast", "digest", "copilot"] },
+  { id: "inventory", name: "Inventory / Ops", fields: ["data_dashboard", "pivot", "anomalies", "data_quality", "recommendations", "copilot"] },
+  { id: "support", name: "Support / Tickets", fields: ["data_dashboard", "pivot", "anomalies", "digest", "recommendations", "copilot"] },
   { id: "project", name: "Project / Delays", fields: ["summary", "totals", "status_breakdown", "flags", "dependency_chains", "person_ranking", "data_dashboard"] },
 ];
 
