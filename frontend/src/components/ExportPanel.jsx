@@ -9,7 +9,7 @@ import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
   Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp, AlertTriangle,
-  FileText, Lightbulb,
+  FileText, Lightbulb, Activity,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
@@ -17,6 +17,7 @@ const SLICE_ENDPOINTS = [
   { key: "dashboard", label: "Data dashboard", path: "/dashboard" },
   { key: "pivot", label: "Pivot / segmentation", path: "/pivot" },
   { key: "forecast", label: "Forecast", path: "/forecast" },
+  { key: "trends", label: "Trends", path: "/trends" },
   { key: "anomalies", label: "Anomaly detection", path: "/anomalies" },
   { key: "digest", label: "Auto-digest", path: "/digest" },
   { key: "recommendations", label: "Recommendations", path: "/recommendations" },
@@ -33,7 +34,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "digest", "pivot", "forecast", "anomalies", "recommendations", "quality", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "digest", "pivot", "forecast", "trends", "anomalies", "recommendations", "quality", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -158,7 +159,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "trends" ? "Trends" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -189,6 +190,10 @@ function getDelayBridgeData() {
 
         {tab === "digest" && (
           <DigestView baseUrl={baseUrl} />
+        )}
+
+        {tab === "trends" && (
+          <TrendsView baseUrl={baseUrl} />
         )}
 
         {tab === "recommendations" && (
@@ -466,6 +471,86 @@ function CopilotView({ baseUrl }) {
       </div>
       <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
         Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
+      </div>
+    </div>
+  );
+}
+
+function TrendsView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setErr(null);
+      try { const r = await fetch(`${baseUrl}/trends`); setData(await r.json()); }
+      catch (e) { setErr(e.message); } finally { setLoading(false); }
+    })();
+  }, [baseUrl]);
+  if (loading) return <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Loading trends…</div>;
+  if (err) return <div className="db-danger text-sm mono">Error: {err}</div>;
+  if (!data) return null;
+  if (data.enabled === false) return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+    Trends isn’t enabled. Enable <span className="db-accent">Trends</span> in Configure.
+  </div>;
+
+  const series = data.series || [];
+  return (
+    <div className="space-y-4" data-testid="trends-tab">
+      <div className="text-[11px] mono uppercase tracking-wider flex items-center gap-2" style={{ color: "var(--db-muted)" }}>
+        <Activity className="w-3.5 h-3.5 db-accent" /> {data.snapshot_count} snapshot(s) captured
+      </div>
+
+      {!data.ready && (
+        <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>{data.message}</div>
+      )}
+
+      {data.changes && data.changes.length > 0 && (
+        <div className="db-card p-4">
+          <div className="text-sm font-medium mb-2">What changed since the last snapshot</div>
+          <div className="flex flex-wrap gap-2">
+            {data.changes.map((c, i) => (
+              <span key={i} className={`db-chip ${c.delta > 0 ? "db-chip-green" : "db-chip-grey"}`}>{c.text}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {series.length >= 2 && (
+        <div className="db-card p-4">
+          <div className="text-sm font-medium mb-3">Rows & quality over time</div>
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={series} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
+              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+              <YAxis yAxisId="l" tick={{ fontSize: 11 }} width={48} />
+              <YAxis yAxisId="r" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} width={36} />
+              <Tooltip />
+              <Legend />
+              <Line yAxisId="l" dataKey="total_rows" stroke="#00aaff" strokeWidth={2} dot name="Rows" />
+              <Line yAxisId="r" dataKey="quality" stroke="#23c48e" strokeWidth={2} strokeDasharray="5 4" dot name="Quality" />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="db-card p-0 overflow-auto max-h-[260px]">
+        <table className="w-full text-sm">
+          <thead><tr>
+            {["Date", "Rows", "Quality", "Anomalies"].map((h) => (
+              <th key={h} className="text-left px-3 py-2" style={{ color: "var(--db-muted)" }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {series.map((s, i) => (
+              <tr key={i} className="border-t" style={{ borderColor: "var(--db-border, #222)" }}>
+                <td className="px-3 py-1.5">{s.date}</td>
+                <td className="px-3 py-1.5 db-tabular-num mono">{s.total_rows.toLocaleString()}</td>
+                <td className="px-3 py-1.5 db-tabular-num mono">{s.quality ?? "—"}</td>
+                <td className="px-3 py-1.5 db-tabular-num mono">{s.anomalies}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

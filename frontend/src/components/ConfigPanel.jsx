@@ -52,6 +52,7 @@ const FIELD_GROUPS = [
       { key: "anomalies", label: "Anomaly detection", hint: "Flags outlier rows in numeric columns (robust median/MAD score)" },
       { key: "digest", label: "Auto-digest (summary)", hint: "Executive summary of the sheet; AI-polished when an API key is set" },
       { key: "recommendations", label: "Recommendations", hint: "Next-best-actions from data-quality & anomaly signals" },
+      { key: "trends", label: "Trends (daily snapshots)", hint: "Tracks rows, totals & quality over time; captures a daily snapshot" },
     ],
   },
 ];
@@ -59,8 +60,8 @@ const FIELD_GROUPS = [
 // One-click domain presets — each switches on a sensible bundle of modules/fields.
 const PRESETS = [
   { id: "general", name: "General analytics", fields: ["data_dashboard", "data_quality", "pivot", "digest", "recommendations", "copilot"] },
-  { id: "finance", name: "Finance", fields: ["data_dashboard", "pivot", "forecast", "data_quality", "digest", "copilot"] },
-  { id: "sales", name: "Sales", fields: ["summary", "totals", "data_dashboard", "pivot", "forecast", "digest", "copilot"] },
+  { id: "finance", name: "Finance", fields: ["data_dashboard", "pivot", "forecast", "data_quality", "digest", "trends", "copilot"] },
+  { id: "sales", name: "Sales", fields: ["summary", "totals", "data_dashboard", "pivot", "forecast", "digest", "trends", "copilot"] },
   { id: "inventory", name: "Inventory / Ops", fields: ["data_dashboard", "pivot", "anomalies", "data_quality", "recommendations", "copilot"] },
   { id: "support", name: "Support / Tickets", fields: ["data_dashboard", "pivot", "anomalies", "digest", "recommendations", "copilot"] },
   { id: "project", name: "Project / Delays", fields: ["summary", "totals", "status_breakdown", "flags", "dependency_chains", "person_ranking", "data_dashboard"] },

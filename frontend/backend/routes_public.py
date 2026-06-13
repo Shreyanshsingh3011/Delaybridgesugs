@@ -246,6 +246,53 @@ async def get_recommendations(token: str):
     return {"enabled": True, "project": sess.get("name"), **build_recommendations(sheets)}
 
 
+async def _capture_snapshot(db, token, sess, sheets):
+    """Upsert today's snapshot (one per token per day)."""
+    from snapshots import snapshot_metrics
+    today = datetime.now(timezone.utc).date().isoformat()
+    rowid = f"{token}:{today}"
+    doc = {"id": rowid, "token": token, "session_id": sess.get("id"), "date": today,
+           "captured_at": datetime.now(timezone.utc).isoformat(), "sheets": snapshot_metrics(sheets)}
+    try:
+        await db.snapshots.update_one({"id": rowid}, {"$set": doc}, upsert=True)
+    except Exception as e:
+        logger.warning("snapshot capture failed: %s", e)
+
+
+@router.get("/{token}/trends")
+async def get_trends(token: str):
+    """Time series + 'what changed' from daily snapshots. Captures today's on access.
+    Enabled via 'trends'."""
+    from server import db
+    from snapshots import compute_trends
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("trends" in fields)):
+        return {"enabled": False, "message": "Trends module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    await _capture_snapshot(db, token, sess, sheets)
+    snaps = []
+    cur = db.snapshots.find({"token": token}).sort("date", 1)
+    async for it in cur:
+        snaps.append(it)
+    t = compute_trends(snaps)
+    ready = len(t["series"]) >= 2
+    return {"enabled": True, "ready": ready, "project": sess.get("name"),
+            "snapshot_count": len(t["series"]),
+            "message": None if ready else "Trends need at least 2 daily snapshots. Today's is captured — check back after the next daily capture.",
+            **t}
+
+
+@router.post("/{token}/snapshot")
+async def post_snapshot(token: str):
+    """Force-capture a snapshot now (e.g. from a daily cron)."""
+    from server import db
+    sess = await _get_by_token(db, token)
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    await _capture_snapshot(db, token, sess, sheets)
+    return {"ok": True, "date": datetime.now(timezone.utc).date().isoformat()}
+
+
 # -------- Composable export --------
 EXPORT_FIELDS = [
     "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",
