@@ -189,6 +189,20 @@ async def get_forecast(token: str, periods: int = 6, date: Optional[str] = None,
                           measure_col=measure, granularity=granularity, sheet_label=sheet)
 
 
+@router.get("/{token}/anomalies")
+async def get_anomalies(token: str, column: Optional[str] = None, sensitivity: str = "medium",
+                        sheet: Optional[str] = None):
+    """Outlier detection (robust median/MAD z-score). Enabled via 'anomalies'."""
+    from server import db
+    from insights import build_anomalies
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("anomalies" in fields)):
+        return {"enabled": False, "message": "Anomaly module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    return build_anomalies(sheets, column=column, sensitivity=sensitivity, sheet_label=sheet)
+
+
 # -------- Composable export --------
 EXPORT_FIELDS = [
     "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",

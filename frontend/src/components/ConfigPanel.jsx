@@ -49,8 +49,19 @@ const FIELD_GROUPS = [
       { key: "data_quality", label: "Data-quality audit", hint: "Missing values, duplicates, casing issues, subtotal rows, type mismatches + score" },
       { key: "pivot", label: "Pivot & segmentation", hint: "Group any dimension by sum/avg/count of any measure (excludes total rows)" },
       { key: "forecast", label: "Forecast", hint: "Project a numeric measure over time with P80/P95 bands (needs a date column)" },
+      { key: "anomalies", label: "Anomaly detection", hint: "Flags outlier rows in numeric columns (robust median/MAD score)" },
     ],
   },
+];
+
+// One-click domain presets — each switches on a sensible bundle of modules/fields.
+const PRESETS = [
+  { id: "general", name: "General analytics", fields: ["data_dashboard", "data_quality", "pivot", "copilot"] },
+  { id: "finance", name: "Finance", fields: ["data_dashboard", "pivot", "forecast", "data_quality", "copilot"] },
+  { id: "sales", name: "Sales", fields: ["summary", "totals", "data_dashboard", "pivot", "forecast", "copilot"] },
+  { id: "inventory", name: "Inventory / Ops", fields: ["data_dashboard", "pivot", "anomalies", "data_quality", "copilot"] },
+  { id: "support", name: "Support / Tickets", fields: ["data_dashboard", "pivot", "anomalies", "copilot", "data_quality"] },
+  { id: "project", name: "Project / Delays", fields: ["summary", "totals", "status_breakdown", "flags", "dependency_chains", "person_ranking", "data_dashboard"] },
 ];
 
 export default function ConfigPanel({
@@ -87,6 +98,25 @@ export default function ConfigPanel({
           <button data-testid="run-analysis-button" onClick={onAnalyze} className="db-btn">
             <Play className="w-4 h-4" /> Run analysis
           </button>
+        </div>
+      </div>
+
+      {/* Domain templates — one-click module bundles */}
+      <div className="db-card p-4" data-testid="templates-row">
+        <div className="text-[11px] mono uppercase tracking-wider mb-2" style={{ color: "var(--db-muted)" }}>
+          quick templates · one click bundles the right modules
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PRESETS.map((p) => {
+            const active = p.fields.length === exportFields.length && p.fields.every((f) => exportFields.includes(f));
+            return (
+              <button key={p.id} data-testid={`preset-${p.id}`}
+                      onClick={() => { setExportFields(p.fields); onSaveFields(p.fields); }}
+                      className={`db-btn ${active ? "" : "db-btn-ghost"}`} title={p.fields.join(", ")}>
+                {p.name}
+              </button>
+            );
+          })}
         </div>
       </div>
 

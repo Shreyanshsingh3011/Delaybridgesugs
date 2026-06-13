@@ -5,6 +5,7 @@
 Pure-Python, no API key required.
 """
 import re
+import statistics
 from typing import Any, Dict, List, Optional
 from collections import Counter, defaultdict
 
@@ -165,4 +166,53 @@ def build_pivot(sheets: List[Dict[str, Any]], dimension: Optional[str] = None,
         "available_sheets": [s.get("label") for s in sheets],
         "data": out,
         "total": total,
+    }
+
+
+def build_anomalies(sheets: List[Dict[str, Any]], column: Optional[str] = None,
+                    sensitivity: str = "medium", sheet_label: Optional[str] = None) -> Dict[str, Any]:
+    """Outlier detection via robust modified z-score (median + MAD). Excludes total rows."""
+    sheet = _pick_sheet(sheets, sheet_label)
+    if not sheet:
+        return {"enabled": True, "error": "No sheet available"}
+    rows = [r for r in (sheet.get("rows_raw") or []) if not _is_total_row(r)]
+    headers = list(rows[0].keys()) if rows else (sheet.get("headers") or [])
+    cols = _infer_columns(rows, headers)
+    numeric = [c["name"] for c in cols if c["type"] == "number"]
+    label_col = next((c["name"] for c in cols if c["type"] in ("category", "text")), None)
+    thr = {"low": 5.0, "medium": 3.5, "high": 2.5}.get(sensitivity, 3.5)
+    targets = [column] if column in numeric else numeric
+
+    anomalies = []
+    for col in targets:
+        vals, idxs = [], []
+        for i, r in enumerate(rows):
+            x = _to_number(r.get(col))
+            if x is not None:
+                vals.append(x)
+                idxs.append(i)
+        if len(vals) < 5:
+            continue
+        med = statistics.median(vals)
+        mad = statistics.median([abs(v - med) for v in vals])
+        if mad > 0:
+            scores = [0.6745 * (v - med) / mad for v in vals]
+        else:
+            sd = statistics.pstdev(vals)
+            if sd == 0:
+                continue
+            scores = [(v - med) / sd for v in vals]
+        for v, sc, i in zip(vals, scores, idxs):
+            if abs(sc) >= thr:
+                r = rows[i]
+                anomalies.append({
+                    "column": col, "value": round(v, 2), "score": round(sc, 2),
+                    "direction": "high" if sc > 0 else "low",
+                    "label": str(r.get(label_col)) if label_col else f"row {i + 1}",
+                })
+    anomalies.sort(key=lambda a: -abs(a["score"]))
+    return {
+        "enabled": True, "sheet": sheet.get("label"), "sensitivity": sensitivity,
+        "available_columns": numeric, "available_sheets": [s.get("label") for s in sheets],
+        "count": len(anomalies), "anomalies": anomalies[:100],
     }

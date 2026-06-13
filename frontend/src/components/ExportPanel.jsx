@@ -8,7 +8,7 @@ import { PUBLIC_BASE } from "../api";
 import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
-  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp,
+  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp, AlertTriangle,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
@@ -16,6 +16,7 @@ const SLICE_ENDPOINTS = [
   { key: "dashboard", label: "Data dashboard", path: "/dashboard" },
   { key: "pivot", label: "Pivot / segmentation", path: "/pivot" },
   { key: "forecast", label: "Forecast", path: "/forecast" },
+  { key: "anomalies", label: "Anomaly detection", path: "/anomalies" },
   { key: "quality", label: "Data-quality audit", path: "/quality" },
   { key: "flags", label: "Flags only", path: "/flags" },
   { key: "variances", label: "Variances only", path: "/variances" },
@@ -29,7 +30,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "pivot", "forecast", "quality", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "pivot", "forecast", "anomalies", "quality", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -154,7 +155,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "anomalies" ? "Anomalies" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -181,6 +182,10 @@ function getDelayBridgeData() {
 
         {tab === "copilot" && (
           <CopilotView baseUrl={baseUrl} />
+        )}
+
+        {tab === "anomalies" && (
+          <AnomaliesView baseUrl={baseUrl} />
         )}
 
         {tab === "forecast" && (
@@ -451,6 +456,87 @@ function CopilotView({ baseUrl }) {
       <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
         Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
       </div>
+    </div>
+  );
+}
+
+function AnomaliesView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [sensitivity, setSensitivity] = useState("medium");
+  const [column, setColumn] = useState("");
+
+  const load = async (params = {}) => {
+    setLoading(true); setErr(null);
+    const qs = new URLSearchParams();
+    qs.set("sensitivity", params.sensitivity ?? sensitivity);
+    const c = params.column ?? column;
+    if (c) qs.set("column", c);
+    try {
+      const r = await fetch(`${baseUrl}/anomalies?${qs.toString()}`);
+      setData(await r.json());
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  if (data && data.enabled === false) {
+    return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+      Anomaly module isn’t enabled. Enable <span className="db-accent">Anomaly detection</span> in Configure.
+    </div>;
+  }
+  const anomalies = data?.anomalies || [];
+  return (
+    <div className="space-y-4" data-testid="anomalies-tab">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Column">
+          <select className="db-select" value={column} onChange={(e) => { setColumn(e.target.value); load({ column: e.target.value }); }}>
+            <option value="">All numeric</option>
+            {(data?.available_columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Sensitivity">
+          <select className="db-select" value={sensitivity} onChange={(e) => { setSensitivity(e.target.value); load({ sensitivity: e.target.value }); }}>
+            <option value="low">Low (only extreme)</option>
+            <option value="medium">Medium</option>
+            <option value="high">High (more flags)</option>
+          </select>
+        </Field>
+        <div className="text-[11px] mono ml-auto" style={{ color: "var(--db-muted)" }}>
+          <AlertTriangle className="w-3.5 h-3.5 inline db-warning" /> {data?.count ?? 0} anomalies
+        </div>
+      </div>
+
+      {loading && <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Scanning…</div>}
+      {err && <div className="db-danger text-sm mono">Error: {err}</div>}
+
+      {!loading && anomalies.length === 0 && (
+        <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>No anomalies at this sensitivity.</div>
+      )}
+      {!loading && anomalies.length > 0 && (
+        <div className="db-card p-0 overflow-auto max-h-[420px]">
+          <table className="w-full text-sm">
+            <thead><tr>
+              {["Row", "Column", "Value", "Score", ""].map((h) => (
+                <th key={h} className="text-left px-3 py-2" style={{ color: "var(--db-muted)" }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {anomalies.map((a, i) => (
+                <tr key={i} className="border-t" style={{ borderColor: "var(--db-border, #222)" }}>
+                  <td className="px-3 py-1.5 max-w-[280px] truncate" title={a.label}>{a.label}</td>
+                  <td className="px-3 py-1.5"><span className="db-chip db-chip-grey">{a.column}</span></td>
+                  <td className="px-3 py-1.5 db-tabular-num mono">{Number(a.value).toLocaleString()}</td>
+                  <td className="px-3 py-1.5 db-tabular-num mono">{a.score}</td>
+                  <td className="px-3 py-1.5">
+                    <span className={a.direction === "high" ? "db-danger" : "db-warning"}>{a.direction === "high" ? "▲ high" : "▼ low"}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
