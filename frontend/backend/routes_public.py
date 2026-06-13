@@ -172,6 +172,23 @@ async def get_pivot(token: str, dimension: Optional[str] = None, measure: Option
                        include_totals=include_totals, sheet_label=sheet)
 
 
+@router.get("/{token}/forecast")
+async def get_forecast(token: str, periods: int = 6, date: Optional[str] = None,
+                       measure: Optional[str] = None, granularity: Optional[str] = None,
+                       sheet: Optional[str] = None):
+    """Time-series forecast with P80/P95 bands. Needs a date column + numeric measure.
+    Enabled via 'forecast'."""
+    from server import db
+    from forecast import build_forecast
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("forecast" in fields)):
+        return {"enabled": False, "message": "Forecast module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    return build_forecast(sheets, periods=max(1, min(36, periods)), date_col=date,
+                          measure_col=measure, granularity=granularity, sheet_label=sheet)
+
+
 # -------- Composable export --------
 EXPORT_FIELDS = [
     "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",

@@ -2,19 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  ComposedChart, Area, Line, Legend,
 } from "recharts";
 import { PUBLIC_BASE } from "../api";
 import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
-  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2,
+  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
   { key: "full", label: "Full analysis JSON", path: "" },
   { key: "dashboard", label: "Data dashboard", path: "/dashboard" },
-  { key: "quality", label: "Data-quality audit", path: "/quality" },
   { key: "pivot", label: "Pivot / segmentation", path: "/pivot" },
+  { key: "forecast", label: "Forecast", path: "/forecast" },
+  { key: "quality", label: "Data-quality audit", path: "/quality" },
   { key: "flags", label: "Flags only", path: "/flags" },
   { key: "variances", label: "Variances only", path: "/variances" },
   { key: "correlations", label: "Correlations", path: "/correlations" },
@@ -27,7 +29,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "pivot", "quality", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "pivot", "forecast", "quality", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -152,7 +154,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "pivot" ? "Pivot" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -179,6 +181,10 @@ function getDelayBridgeData() {
 
         {tab === "copilot" && (
           <CopilotView baseUrl={baseUrl} />
+        )}
+
+        {tab === "forecast" && (
+          <ForecastView baseUrl={baseUrl} />
         )}
 
         {tab === "pivot" && (
@@ -445,6 +451,123 @@ function CopilotView({ baseUrl }) {
       <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
         Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
       </div>
+    </div>
+  );
+}
+
+function ForecastView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [periods, setPeriods] = useState(6);
+  const [measure, setMeasure] = useState("");
+  const [gran, setGran] = useState("");
+
+  const load = async (params = {}) => {
+    setLoading(true); setErr(null);
+    const qs = new URLSearchParams();
+    qs.set("periods", params.periods ?? periods);
+    const m = params.measure ?? measure;
+    const g = params.gran ?? gran;
+    if (m) qs.set("measure", m);
+    if (g) qs.set("granularity", g);
+    try {
+      const r = await fetch(`${baseUrl}/forecast?${qs.toString()}`);
+      const j = await r.json();
+      setData(j);
+      if (j.measure_col && j.measure_col !== "(row count)") setMeasure(j.measure_col);
+      if (j.granularity) setGran(j.granularity);
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  if (data && data.enabled === false) {
+    return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+      Forecast module isn’t enabled. Enable <span className="db-accent">Forecast</span> in Configure.
+    </div>;
+  }
+  if (data && data.ready === false) {
+    return (
+      <div className="db-card p-5 text-sm space-y-2" style={{ color: "var(--db-muted)" }}>
+        <div className="db-warning">{data.message}</div>
+        <div>Detected date columns: {(data.available_dates || []).join(", ") || "none"} · numeric measures: {(data.available_measures || []).join(", ") || "none"}.</div>
+        <div>Connect a sheet that has a date/timestamp column to use forecasting.</div>
+      </div>
+    );
+  }
+
+  const chartData = data ? [
+    ...(data.history || []).map((h) => ({ period: h.period, actual: h.value })),
+    ...(data.forecast || []).map((f) => ({ period: f.period, p50: f.p50, band95: [f.p95_low, f.p95_high], band80: [f.p80_low, f.p80_high] })),
+  ] : [];
+
+  return (
+    <div className="space-y-4" data-testid="forecast-tab">
+      <div className="flex flex-wrap items-end gap-3">
+        {data?.available_measures?.length > 0 && (
+          <Field label="Measure">
+            <select className="db-select" value={measure} onChange={(e) => { setMeasure(e.target.value); load({ measure: e.target.value }); }}>
+              {data.available_measures.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Granularity">
+          <select className="db-select" value={gran} onChange={(e) => { setGran(e.target.value); load({ gran: e.target.value }); }}>
+            <option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option>
+          </select>
+        </Field>
+        <Field label="Periods ahead">
+          <select className="db-select" value={periods} onChange={(e) => { setPeriods(Number(e.target.value)); load({ periods: e.target.value }); }}>
+            {[3, 6, 12, 18, 24].map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {loading && <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Forecasting…</div>}
+      {err && <div className="db-danger text-sm mono">Error: {err}</div>}
+
+      {!loading && data?.ready && (
+        <>
+          <div className="db-card p-4">
+            <div className="text-sm font-medium mb-1">
+              {data.measure_col} over time · {data.granularity} · trend {data.trend_per_period >= 0 ? "+" : ""}{data.trend_per_period}/period
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
+                <XAxis dataKey="period" tick={{ fontSize: 10 }} interval="preserveStartEnd" angle={-20} textAnchor="end" height={50} />
+                <YAxis tick={{ fontSize: 11 }} width={48} />
+                <Tooltip />
+                <Legend />
+                <Area dataKey="band95" stroke="none" fill="#7c5cff" fillOpacity={0.12} name="P95 band" />
+                <Area dataKey="band80" stroke="none" fill="#00aaff" fillOpacity={0.18} name="P80 band" />
+                <Line dataKey="actual" stroke="#23c48e" strokeWidth={2} dot={false} name="Actual" />
+                <Line dataKey="p50" stroke="#00aaff" strokeWidth={2} strokeDasharray="5 4" dot={false} name="Forecast (P50)" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="db-card p-0 overflow-auto max-h-[280px]">
+            <table className="w-full text-sm">
+              <thead><tr>
+                {["Period", "P50", "P80 low", "P80 high", "P95 low", "P95 high"].map((h) => (
+                  <th key={h} className="text-right px-3 py-2 first:text-left" style={{ color: "var(--db-muted)" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {(data.forecast || []).map((f, i) => (
+                  <tr key={i} className="border-t" style={{ borderColor: "var(--db-border, #222)" }}>
+                    <td className="px-3 py-1.5">{f.period}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono">{f.p50.toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p80_low.toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p80_high.toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p95_low.toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p95_high.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
