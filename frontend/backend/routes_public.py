@@ -666,8 +666,9 @@ async def chat(token: str, payload: ChatRequest):
 
 
 @router.post("/{token}/copilot")
-async def copilot(token: str, payload: ChatRequest):
+async def copilot(token: str, payload: ChatRequest, sheet: Optional[str] = None):
     """Sheet-grounded AI Q&A. Answers from server-computed exact aggregates + a data sample.
+    Pass ?sheet=<label> to ground answers on one selected sheet.
     Enabled when 'copilot' is selected in configure-export (or no field filter is set)."""
     from server import db
     from copilot import build_sheet_context, build_copilot_system_prompt
@@ -676,10 +677,15 @@ async def copilot(token: str, payload: ChatRequest):
     if not ((not fields) or ("copilot" in fields)):
         return {"enabled": False, "answer": "The Copilot module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    if sheet:
+        sel = [s for s in sheets if s.get("label") == sheet]
+        if sel:
+            sheets = sel
     if not sheets:
         return {"enabled": True, "answer": "No connected sheets to answer from yet."}
     ctx = build_sheet_context(sheets)
-    system_prompt = build_copilot_system_prompt(ctx["text"], sess.get("name") or "this dataset")
+    scope = f" (focused on sheet '{sheet}')" if sheet and len(sheets) == 1 else ""
+    system_prompt = build_copilot_system_prompt(ctx["text"], (sess.get("name") or "this dataset") + scope)
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("EMERGENT_LLM_KEY") or ""
     chat_session_id = payload.session_id or str(uuid.uuid4())
     answer = await chat_send(api_key, chat_session_id, system_prompt, payload.message)
