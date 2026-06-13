@@ -76,11 +76,13 @@ async def cron_snapshot(request: Request):
     if secret:
         if request.headers.get("authorization", "") != f"Bearer {secret}":
             raise HTTPException(status_code=403, detail="Forbidden")
-    from routes_public import _capture_snapshot
+    from routes_public import _capture_snapshot, _run_alerts
+    from alerts import aggregate_metrics
     sessions = []
     async for s in db.sessions.find({}):
         sessions.append(s)
     count = 0
+    alerts_fired = 0
     for sess in sessions:
         sheets = [sh for sh in (sess.get("sheets") or []) if sh.get("connected")]
         token = sess.get("public_token")
@@ -88,8 +90,17 @@ async def cron_snapshot(request: Request):
             continue
         await _capture_snapshot(db, token, sess, sheets)
         count += 1
-    logger.info("cron snapshot captured for %d exports", count)
-    return {"ok": True, "snapshotted": count}
+        if sess.get("export_alert_rules"):
+            snaps = []
+            async for it in db.snapshots.find({"token": token}).sort("date", -1).limit(2):
+                snaps.append(it)
+            cur = aggregate_metrics(snaps[0]["sheets"]) if snaps else None
+            prev = aggregate_metrics(snaps[1]["sheets"]) if len(snaps) > 1 else None
+            if cur:
+                fired = await _run_alerts(db, token, sess, cur, prev)
+                alerts_fired += len(fired)
+    logger.info("cron snapshot captured for %d exports, %d alerts fired", count, alerts_fired)
+    return {"ok": True, "snapshotted": count, "alerts_fired": alerts_fired}
 
 
 app.include_router(health_router)

@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from models import ChatRequest, FlagAction, SHEET_COLORS
 from flags import downstream_for_email
@@ -291,6 +292,69 @@ async def post_snapshot(token: str):
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     await _capture_snapshot(db, token, sess, sheets)
     return {"ok": True, "date": datetime.now(timezone.utc).date().isoformat()}
+
+
+class AlertRules(BaseModel):
+    rules: list = []
+
+
+@router.get("/{token}/alerts/rules")
+async def get_alert_rules(token: str):
+    from server import db
+    sess = await _get_by_token(db, token)
+    return {"rules": sess.get("export_alert_rules") or []}
+
+
+@router.post("/{token}/alerts/rules")
+async def set_alert_rules(token: str, payload: AlertRules):
+    from server import db
+    await db.sessions.update_one(
+        {"public_token": token},
+        {"$set": {"export_alert_rules": payload.rules,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True, "rules": payload.rules}
+
+
+async def _run_alerts(db, token, sess, cur, prev):
+    """Evaluate this export's alert rules, log triggered ones, and POST any webhooks."""
+    from alerts import evaluate_rules
+    triggered = evaluate_rules(sess.get("export_alert_rules") or [], cur, prev)
+    for t in triggered:
+        entry = {"id": str(uuid.uuid4()), "token": token, "type": "alert_rule",
+                 "metric": t["metric"], "value": t["value"], "message": t["message"],
+                 "created_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            await db.alert_log.insert_one(entry)
+        except Exception:
+            pass
+        if t.get("webhook_url"):
+            try:
+                await db.client.post(t["webhook_url"],
+                                     json={"project": sess.get("name"), "token": token, "alert": t},
+                                     timeout=10)
+            except Exception as e:
+                logger.warning("webhook failed: %s", e)
+    return triggered
+
+
+@router.post("/{token}/alerts/test")
+async def test_alerts(token: str):
+    """Evaluate alert rules against current data right now (logs + fires webhooks)."""
+    from server import db
+    from snapshots import snapshot_metrics
+    from alerts import aggregate_metrics
+    sess = await _get_by_token(db, token)
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    cur = aggregate_metrics(snapshot_metrics(sheets))
+    prev = None
+    snaps = []
+    async for it in db.snapshots.find({"token": token}).sort("date", -1).limit(1):
+        snaps.append(it)
+    if snaps:
+        prev = aggregate_metrics(snaps[0].get("sheets", []))
+    triggered = await _run_alerts(db, token, sess, cur, prev)
+    return {"ok": True, "current": cur, "triggered": triggered, "count": len(triggered)}
 
 
 # -------- Composable export --------

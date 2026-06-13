@@ -9,7 +9,7 @@ import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
   Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp, AlertTriangle,
-  FileText, Lightbulb, Activity,
+  FileText, Lightbulb, Activity, Bell, Plus, Trash2,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
@@ -34,7 +34,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "digest", "pivot", "forecast", "trends", "anomalies", "recommendations", "quality", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "digest", "pivot", "forecast", "trends", "anomalies", "recommendations", "quality", "alerts", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -159,7 +159,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "trends" ? "Trends" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "trends" ? "Trends" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "alerts" ? "Alerts" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -190,6 +190,10 @@ function getDelayBridgeData() {
 
         {tab === "digest" && (
           <DigestView baseUrl={baseUrl} />
+        )}
+
+        {tab === "alerts" && (
+          <AlertsView baseUrl={baseUrl} />
         )}
 
         {tab === "trends" && (
@@ -472,6 +476,112 @@ function CopilotView({ baseUrl }) {
       <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
         Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
       </div>
+    </div>
+  );
+}
+
+function AlertsView({ baseUrl }) {
+  const [rules, setRules] = useState([]);
+  const [log, setLog] = useState([]);
+  const [tested, setTested] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const refresh = async () => {
+    try {
+      const [rr, lr] = await Promise.all([
+        fetch(`${baseUrl}/alerts/rules`).then((r) => r.json()),
+        fetch(`${baseUrl}/alerts`).then((r) => r.json()),
+      ]);
+      setRules(rr.rules || []);
+      setLog(lr.alerts || lr.history || lr || []);
+    } catch (e) { /* ignore */ }
+  };
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [baseUrl]);
+
+  const update = (i, k, v) => setRules((rs) => rs.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
+  const add = () => setRules((rs) => [...rs, { label: "", metric: "total_rows", op: "lt", threshold: 0, webhook_url: "" }]);
+  const remove = (i) => setRules((rs) => rs.filter((_, idx) => idx !== i));
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      await fetch(`${baseUrl}/alerts/rules`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rules }),
+      });
+      setMsg("Saved.");
+    } catch (e) { setMsg("Save failed: " + e.message); } finally { setSaving(false); }
+  };
+  const test = async () => {
+    setMsg(null);
+    try {
+      const r = await fetch(`${baseUrl}/alerts/test`, { method: "POST" });
+      setTested(await r.json());
+      refresh();
+    } catch (e) { setMsg("Test failed: " + e.message); }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="alerts-tab">
+      <div className="text-[11px] mono uppercase tracking-wider flex items-center gap-2" style={{ color: "var(--db-muted)" }}>
+        <Bell className="w-3.5 h-3.5 db-accent" /> Rules run on the daily snapshot and fire webhooks when triggered.
+      </div>
+
+      <div className="space-y-2">
+        {rules.map((r, i) => (
+          <div key={i} className="db-card p-3 flex flex-wrap items-end gap-2">
+            <Field label="Label"><input className="db-select" style={{ width: 120 }} value={r.label || ""} onChange={(e) => update(i, "label", e.target.value)} placeholder="optional" /></Field>
+            <Field label="Metric">
+              <input className="db-select" style={{ width: 130 }} list="metric-opts" value={r.metric} onChange={(e) => update(i, "metric", e.target.value)} />
+              <datalist id="metric-opts"><option value="total_rows" /><option value="quality" /><option value="anomalies" /></datalist>
+            </Field>
+            <Field label="Condition">
+              <select className="db-select" value={r.op} onChange={(e) => update(i, "op", e.target.value)}>
+                <option value="lt">drops below</option><option value="gt">rises above</option><option value="change_pct">changes ≥ % </option>
+              </select>
+            </Field>
+            <Field label="Value"><input type="number" className="db-select" style={{ width: 90 }} value={r.threshold} onChange={(e) => update(i, "threshold", e.target.value)} /></Field>
+            <Field label="Webhook URL (optional)"><input className="db-select" style={{ width: 220 }} value={r.webhook_url || ""} onChange={(e) => update(i, "webhook_url", e.target.value)} placeholder="https://…" /></Field>
+            <button onClick={() => remove(i)} className="db-btn db-btn-ghost"><Trash2 className="w-3.5 h-3.5" /></button>
+          </div>
+        ))}
+        {rules.length === 0 && <div className="text-sm" style={{ color: "var(--db-muted)" }}>No rules yet. Add one below.</div>}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button onClick={add} className="db-btn db-btn-ghost"><Plus className="w-3.5 h-3.5" /> Add rule</button>
+        <button onClick={save} disabled={saving} className="db-btn"><Check className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save rules"}</button>
+        <button onClick={test} className="db-btn db-btn-ghost"><Bell className="w-3.5 h-3.5" /> Test now</button>
+        {msg && <span className="text-xs mono" style={{ color: "var(--db-muted)" }}>{msg}</span>}
+      </div>
+
+      {tested && (
+        <div className="db-card p-4">
+          <div className="text-sm font-medium mb-2">Test result · {tested.count} triggered</div>
+          <div className="text-[12px] mono mb-2" style={{ color: "var(--db-muted)" }}>
+            current: rows {tested.current?.total_rows}, quality {tested.current?.quality ?? "—"}, anomalies {tested.current?.anomalies}
+          </div>
+          {(tested.triggered || []).map((t, i) => (
+            <div key={i} className="db-chip db-chip-grey mr-2 mb-1">{t.message}</div>
+          ))}
+          {(tested.triggered || []).length === 0 && <div className="text-sm db-success">No rules triggered.</div>}
+        </div>
+      )}
+
+      {log.length > 0 && (
+        <div className="db-card p-4">
+          <div className="text-sm font-medium mb-2">Recent alerts</div>
+          <div className="space-y-1 max-h-[200px] overflow-auto">
+            {log.slice(0, 30).map((a, i) => (
+              <div key={i} className="text-[12px] mono flex gap-2">
+                <span style={{ color: "var(--db-muted)" }}>{(a.created_at || "").slice(0, 16).replace("T", " ")}</span>
+                <span>{a.message || a.metric}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
