@@ -247,6 +247,31 @@ async def get_recommendations(token: str):
     return {"enabled": True, "project": sess.get("name"), **build_recommendations(sheets)}
 
 
+@router.get("/{token}/whatif")
+async def get_whatif(token: str, dimension: Optional[str] = None, measure: Optional[str] = None,
+                     adjust: Optional[str] = None, global_pct: float = 0.0, sheet: Optional[str] = None):
+    """Scenario modelling. `adjust` is 'KeyA:20,KeyB:-10' (% changes); global_pct applies to all.
+    Enabled via 'whatif'."""
+    from server import db
+    from insights import build_whatif
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("whatif" in fields)):
+        return {"enabled": False, "message": "What-if module is not enabled for this export."}
+    adjustments = {}
+    if adjust:
+        for part in adjust.split(","):
+            if ":" in part:
+                k, _, p = part.rpartition(":")
+                try:
+                    adjustments[k.strip()] = float(p)
+                except ValueError:
+                    pass
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    return build_whatif(sheets, dimension=dimension, measure=measure, adjustments=adjustments,
+                        global_pct=global_pct, sheet_label=sheet)
+
+
 async def _capture_snapshot(db, token, sess, sheets):
     """Upsert today's snapshot (one per token per day)."""
     from snapshots import snapshot_metrics

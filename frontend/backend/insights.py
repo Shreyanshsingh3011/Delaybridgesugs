@@ -297,3 +297,49 @@ def build_recommendations(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
     order = {"high": 0, "medium": 1, "low": 2}
     recs.sort(key=lambda r: order.get(r["severity"], 3))
     return {"recommendations": recs}
+
+
+def build_whatif(sheets: List[Dict[str, Any]], dimension: Optional[str] = None,
+                 measure: Optional[str] = None, adjustments: Optional[Dict[str, float]] = None,
+                 global_pct: float = 0.0, sheet_label: Optional[str] = None) -> Dict[str, Any]:
+    """Scenario modelling: baseline = sum(measure) per dimension; adjusted applies per-category
+    and global % changes. Excludes total/subtotal rows."""
+    sheet = _pick_sheet(sheets, sheet_label)
+    if not sheet:
+        return {"enabled": True, "error": "No sheet available"}
+    rows = [r for r in (sheet.get("rows_raw") or []) if not _is_total_row(r)]
+    headers = list(rows[0].keys()) if rows else (sheet.get("headers") or [])
+    cols = _infer_columns(rows, headers)
+    dims = [c["name"] for c in cols if c["type"] in ("category", "text")]
+    measures = [c["name"] for c in cols if c["type"] == "number"]
+    dimension = dimension if dimension in headers else (dims[0] if dims else None)
+    measure = measure if measure in measures else (measures[0] if measures else None)
+    if not measure or not dimension:
+        return {"enabled": True, "error": "Need a categorical dimension and a numeric measure.",
+                "available_dimensions": dims, "available_measures": measures,
+                "available_sheets": [s.get("label") for s in sheets]}
+    base = defaultdict(float)
+    for r in rows:
+        k = r.get(dimension)
+        m = _to_number(r.get(measure))
+        if k in (None, "") or m is None:
+            continue
+        base[str(k)] += m
+    adj = adjustments or {}
+    baseline = [{"key": k, "value": round(v, 2)} for k, v in sorted(base.items(), key=lambda x: -x[1])]
+    base_total = round(sum(base.values()), 2)
+    adjusted = []
+    for k, v in base.items():
+        pct = adj.get(k, 0.0) + global_pct
+        adjusted.append({"key": k, "value": round(v * (1 + pct / 100.0), 2)})
+    adjusted.sort(key=lambda x: -x["value"])
+    adj_total = round(sum(x["value"] for x in adjusted), 2)
+    return {
+        "enabled": True, "sheet": sheet.get("label"), "dimension": dimension, "measure": measure,
+        "available_dimensions": dims, "available_measures": measures,
+        "available_sheets": [s.get("label") for s in sheets],
+        "baseline": baseline, "baseline_total": base_total,
+        "adjusted": adjusted, "adjusted_total": adj_total,
+        "delta": round(adj_total - base_total, 2),
+        "delta_pct": round((adj_total - base_total) / base_total * 100, 2) if base_total else 0,
+    }

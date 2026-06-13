@@ -9,13 +9,14 @@ import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
   Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2, TrendingUp, AlertTriangle,
-  FileText, Lightbulb, Activity, Bell, Plus, Trash2,
+  FileText, Lightbulb, Activity, Bell, Plus, Trash2, SlidersHorizontal,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
   { key: "full", label: "Full analysis JSON", path: "" },
   { key: "dashboard", label: "Data dashboard", path: "/dashboard" },
   { key: "pivot", label: "Pivot / segmentation", path: "/pivot" },
+  { key: "whatif", label: "What-if simulation", path: "/whatif" },
   { key: "forecast", label: "Forecast", path: "/forecast" },
   { key: "trends", label: "Trends", path: "/trends" },
   { key: "anomalies", label: "Anomaly detection", path: "/anomalies" },
@@ -34,7 +35,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "digest", "pivot", "forecast", "trends", "anomalies", "recommendations", "quality", "alerts", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "digest", "pivot", "whatif", "forecast", "trends", "anomalies", "recommendations", "quality", "alerts", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -159,7 +160,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "forecast" ? "Forecast" : t === "trends" ? "Trends" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "alerts" ? "Alerts" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "digest" ? "Digest" : t === "pivot" ? "Pivot" : t === "whatif" ? "What-if" : t === "forecast" ? "Forecast" : t === "trends" ? "Trends" : t === "anomalies" ? "Anomalies" : t === "recommendations" ? "Recommendations" : t === "quality" ? "Data quality" : t === "alerts" ? "Alerts" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -210,6 +211,10 @@ function getDelayBridgeData() {
 
         {tab === "forecast" && (
           <ForecastView baseUrl={baseUrl} />
+        )}
+
+        {tab === "whatif" && (
+          <WhatIfView baseUrl={baseUrl} />
         )}
 
         {tab === "pivot" && (
@@ -930,6 +935,126 @@ function ForecastView({ baseUrl }) {
                     <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p80_high.toLocaleString()}</td>
                     <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p95_low.toLocaleString()}</td>
                     <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{f.p95_high.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function WhatIfView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [dimension, setDimension] = useState("");
+  const [measure, setMeasure] = useState("");
+  const [globalPct, setGlobalPct] = useState(0);
+  const [adj, setAdj] = useState({}); // key -> pct
+
+  const load = async (params = {}) => {
+    setLoading(true); setErr(null);
+    const qs = new URLSearchParams();
+    const d = params.dimension ?? dimension;
+    const m = params.measure ?? measure;
+    if (d) qs.set("dimension", d);
+    if (m) qs.set("measure", m);
+    try {
+      const r = await fetch(`${baseUrl}/whatif?${qs.toString()}`);
+      const j = await r.json();
+      setData(j);
+      if (j.dimension) setDimension(j.dimension);
+      if (j.measure) setMeasure(j.measure);
+      setAdj({});
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  if (data && data.enabled === false) return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+    What-if isn’t enabled. Enable <span className="db-accent">What-if simulation</span> in Configure.
+  </div>;
+  if (data && data.error) return <div className="db-card p-5 text-sm db-warning">{data.error}</div>;
+
+  const baseline = data?.baseline || [];
+  const scenario = baseline.map((b) => {
+    const pct = (Number(adj[b.key]) || 0) + Number(globalPct || 0);
+    return { key: b.key, base: b.value, value: Math.round(b.value * (1 + pct / 100) * 100) / 100 };
+  });
+  const baseTotal = baseline.reduce((a, b) => a + b.value, 0);
+  const scenTotal = scenario.reduce((a, b) => a + b.value, 0);
+  const delta = scenTotal - baseTotal;
+  const deltaPct = baseTotal ? (delta / baseTotal) * 100 : 0;
+  const chart = scenario.slice(0, 12).map((s) => ({ key: s.key, baseline: s.base, scenario: s.value }));
+
+  return (
+    <div className="space-y-4" data-testid="whatif-tab">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Group by">
+          <select className="db-select" value={dimension} onChange={(e) => { setDimension(e.target.value); load({ dimension: e.target.value }); }}>
+            {(data?.available_dimensions || []).map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+        <Field label="Measure">
+          <select className="db-select" value={measure} onChange={(e) => { setMeasure(e.target.value); load({ measure: e.target.value }); }}>
+            {(data?.available_measures || []).map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Field>
+        <Field label="Global adjust %">
+          <input type="number" className="db-select" style={{ width: 100 }} value={globalPct} onChange={(e) => setGlobalPct(e.target.value)} />
+        </Field>
+        <button onClick={() => { setAdj({}); setGlobalPct(0); }} className="db-btn db-btn-ghost">Reset</button>
+      </div>
+
+      {loading && <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Loading…</div>}
+      {err && <div className="db-danger text-sm mono">Error: {err}</div>}
+
+      {!loading && baseline.length > 0 && (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <Metric label={`Baseline ${data.measure}`} value={Math.round(baseTotal)} />
+            <Metric label="Scenario" value={Math.round(scenTotal)} />
+            <div className="db-card p-3">
+              <div className="text-[10px] mono uppercase tracking-wider" style={{ color: "var(--db-muted)" }}>Change</div>
+              <div className={`db-tabular-num mono text-xl mt-1 ${delta >= 0 ? "db-success" : "db-danger"}`}>
+                {delta >= 0 ? "+" : ""}{Math.round(delta).toLocaleString()} ({deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(1)}%)
+              </div>
+            </div>
+          </div>
+
+          <div className="db-card p-4">
+            <div className="text-sm font-medium mb-3 flex items-center gap-2"><SlidersHorizontal className="w-4 h-4 db-accent" /> Baseline vs scenario</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <XAxis dataKey="key" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={56} />
+                <YAxis tick={{ fontSize: 11 }} width={48} />
+                <Tooltip /><Legend />
+                <Bar dataKey="baseline" fill="#3a3f4b" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="scenario" fill="#00aaff" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="db-card p-0 overflow-auto max-h-[320px]">
+            <table className="w-full text-sm">
+              <thead><tr>
+                {[data.dimension, "Baseline", "Adjust %", "Scenario"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2" style={{ color: "var(--db-muted)" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {scenario.map((s, i) => (
+                  <tr key={i} className="border-t" style={{ borderColor: "var(--db-border, #222)" }}>
+                    <td className="px-3 py-1.5">{s.key}</td>
+                    <td className="px-3 py-1.5 db-tabular-num mono">{s.base.toLocaleString()}</td>
+                    <td className="px-3 py-1.5">
+                      <input type="number" className="db-select" style={{ width: 80 }}
+                             value={adj[s.key] ?? ""} placeholder="0"
+                             onChange={(e) => setAdj((a) => ({ ...a, [s.key]: e.target.value }))} />
+                    </td>
+                    <td className="px-3 py-1.5 db-tabular-num mono db-accent">{s.value.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
