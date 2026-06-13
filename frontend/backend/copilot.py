@@ -2,6 +2,7 @@
 + a small sample) from the raw sheet rows, so the LLM answers quantitative questions from
 real computed numbers instead of guessing. Falls back gracefully when no API key is set."""
 import json
+import re
 from typing import Any, Dict, List
 from collections import Counter
 
@@ -70,6 +71,21 @@ def build_copilot_system_prompt(context_text: str, project_name: str) -> str:
 from collections import Counter, defaultdict  # noqa: E402
 from insights import _is_total_row, _quality_for_sheet, build_digest, _fmt  # noqa: E402
 
+# Identifier-like numeric columns we should NOT treat as a "total" measure.
+_ID_PAT = re.compile(r"(^|\b|_)(no\.?|id|sl|sr|serial|row|order|code|index|rank|#)(\b|_|$)", re.I)
+
+
+def _primary_measure(rows, numeric):
+    """Best 'measure' for a generic 'total' question: the non-identifier numeric column
+    with the largest magnitude (falls back to the first numeric column)."""
+    cand = [c for c in numeric if not _ID_PAT.search(c)] or list(numeric)
+    best, best_sum = None, -1.0
+    for c in cand:
+        s = sum(abs(_to_number(r.get(c)) or 0) for r in rows)
+        if s > best_sum:
+            best, best_sum = c, s
+    return best
+
 
 def answer_locally(question: str, sheets) -> str:
     """Deterministic copilot used when no LLM key is set. Computes exact answers for
@@ -113,14 +129,18 @@ def answer_locally(question: str, sheets) -> str:
 
     superlative = any(w in q for w in ["highest", "top", "most", "largest", "biggest", "lowest", "least", "smallest", "maximum", "minimum"])
     low = any(w in q for w in ["lowest", "least", "smallest", "minimum", "min "])
-    grouping = ("which" in q) or (" by " in q) or ("per " in q) or ("each" in q)
+    grouping = ("which" in q) or (" by " in q) or ("per " in q) or ("each" in q) or ("category" in q)
+    sum_intent = any(w in q for w in ["total", "sum", "value", "amount", "revenue", "spend", "cost"])
+    count_intent = any(w in q for w in ["common", "count", "how many", "number of", "frequency", "occur", "most rows"])
 
-    # Group-by superlative first: "which <dim> has the highest <measure>"
-    if superlative and (grouping or (find_col(cats) and find_col(numeric))):
+    # Group-by superlative: "which <dim> has the highest <measure/total>"
+    if superlative and (grouping or (find_col(cats) and (find_col(numeric) or sum_intent))):
         dim = find_col(cats) or (cats[0] if cats else None)
         measure = find_col(numeric)
+        if measure is None and numeric and (sum_intent or not count_intent):
+            measure = _primary_measure(rows, numeric)
         if dim:
-            if measure:
+            if measure and not count_intent:
                 agg = defaultdict(float)
                 for r in rows:
                     k = r.get(dim); m = _to_number(r.get(measure))
@@ -128,7 +148,7 @@ def answer_locally(question: str, sheets) -> str:
                         agg[str(k)] += m
                 if agg:
                     k, v = (min if low else max)(agg.items(), key=lambda x: x[1])
-                    return f"{dim} with the {'lowest' if low else 'highest'} total {measure}: '{k}' ({_fmt(v)})."
+                    return f"By total {measure}, {dim} '{k}' is {'lowest' if low else 'highest'} ({_fmt(v)})."
             cnt = Counter(str(r.get(dim)) for r in rows if r.get(dim) not in (None, ""))
             if cnt:
                 items = cnt.most_common()
