@@ -688,12 +688,19 @@ async def copilot(token: str, payload: ChatRequest, sheet: Optional[str] = None)
     system_prompt = build_copilot_system_prompt(ctx["text"], (sess.get("name") or "this dataset") + scope)
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("EMERGENT_LLM_KEY") or ""
     chat_session_id = payload.session_id or str(uuid.uuid4())
-    answer = await chat_send(api_key, chat_session_id, system_prompt, payload.message)
+    if api_key:
+        answer = await chat_send(api_key, chat_session_id, system_prompt, payload.message)
+        generated_by = "ai"
+    else:
+        from copilot import answer_locally
+        answer = answer_locally(payload.message, sheets)
+        generated_by = "computed"
     return {
         "enabled": True,
         "session_id": chat_session_id,
         "question": payload.message,
         "answer": answer,
+        "generated_by": generated_by,
         "profile": ctx["profile"],
     }
 
