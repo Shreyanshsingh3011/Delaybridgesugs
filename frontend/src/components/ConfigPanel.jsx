@@ -46,6 +46,8 @@ const FIELD_GROUPS = [
     fields: [
       { key: "data_dashboard", label: "Sheet data dashboard", hint: "Auto KPIs, charts & a data table built from your raw sheet rows" },
       { key: "copilot", label: "Sheet copilot (AI Q&A)", hint: "Ask questions in plain language; answered from exact aggregates of your sheet" },
+      { key: "data_quality", label: "Data-quality audit", hint: "Missing values, duplicates, casing issues, subtotal rows, type mismatches + score" },
+      { key: "pivot", label: "Pivot & segmentation", hint: "Group any dimension by sum/avg/count of any measure (excludes total rows)" },
     ],
   },
 ];

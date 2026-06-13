@@ -7,12 +7,14 @@ import { PUBLIC_BASE } from "../api";
 import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
-  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send,
+  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send, ShieldCheck, Table2,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
   { key: "full", label: "Full analysis JSON", path: "" },
   { key: "dashboard", label: "Data dashboard", path: "/dashboard" },
+  { key: "quality", label: "Data-quality audit", path: "/quality" },
+  { key: "pivot", label: "Pivot / segmentation", path: "/pivot" },
   { key: "flags", label: "Flags only", path: "/flags" },
   { key: "variances", label: "Variances only", path: "/variances" },
   { key: "correlations", label: "Correlations", path: "/correlations" },
@@ -25,7 +27,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "copilot", "preview", "snippets"];
+  return ["link", "dashboard", "pivot", "quality", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -150,7 +152,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "pivot" ? "Pivot" : t === "quality" ? "Data quality" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -177,6 +179,14 @@ function getDelayBridgeData() {
 
         {tab === "copilot" && (
           <CopilotView baseUrl={baseUrl} />
+        )}
+
+        {tab === "pivot" && (
+          <PivotView baseUrl={baseUrl} />
+        )}
+
+        {tab === "quality" && (
+          <QualityView baseUrl={baseUrl} />
         )}
 
         {tab === "dashboard" && (
@@ -435,6 +445,219 @@ function CopilotView({ baseUrl }) {
       <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
         Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
       </div>
+    </div>
+  );
+}
+
+function PivotView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [dimension, setDimension] = useState("");
+  const [measure, setMeasure] = useState("");
+  const [agg, setAgg] = useState("sum");
+  const [includeTotals, setIncludeTotals] = useState(false);
+
+  const load = async (params = {}) => {
+    setLoading(true); setErr(null);
+    const qs = new URLSearchParams();
+    const d = params.dimension ?? dimension;
+    const m = params.measure ?? measure;
+    const a = params.agg ?? agg;
+    const it = params.includeTotals ?? includeTotals;
+    if (d) qs.set("dimension", d);
+    if (m && a !== "count") qs.set("measure", m);
+    qs.set("agg", a);
+    qs.set("include_totals", it ? "true" : "false");
+    try {
+      const r = await fetch(`${baseUrl}/pivot?${qs.toString()}`);
+      const j = await r.json();
+      setData(j);
+      if (j.dimension) setDimension(j.dimension);
+      if (j.measure) setMeasure(j.measure);
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  if (data && data.enabled === false) {
+    return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+      Pivot module isn’t enabled. Enable <span className="db-accent">Pivot & segmentation</span> in Configure.
+    </div>;
+  }
+
+  const dims = data?.available_dimensions || [];
+  const measures = data?.available_measures || [];
+  const rows = data?.data || [];
+
+  return (
+    <div className="space-y-4" data-testid="pivot-tab">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Group by">
+          <select className="db-select" value={dimension}
+                  onChange={(e) => { setDimension(e.target.value); load({ dimension: e.target.value }); }}>
+            {dims.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+        <Field label="Aggregate">
+          <select className="db-select" value={agg}
+                  onChange={(e) => { setAgg(e.target.value); load({ agg: e.target.value }); }}>
+            <option value="sum">Sum</option>
+            <option value="avg">Average</option>
+            <option value="count">Count</option>
+          </select>
+        </Field>
+        {agg !== "count" && (
+          <Field label="Measure">
+            <select className="db-select" value={measure}
+                    onChange={(e) => { setMeasure(e.target.value); load({ measure: e.target.value }); }}>
+              {measures.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </Field>
+        )}
+        <label className="db-toggle-row" style={{ cursor: "pointer" }}>
+          <span className="text-xs">Include total rows</span>
+          <input type="checkbox" className="accent-[#00aaff] w-4 h-4 ml-2" checked={includeTotals}
+                 onChange={(e) => { setIncludeTotals(e.target.checked); load({ includeTotals: e.target.checked }); }} />
+        </label>
+      </div>
+
+      {loading && <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Computing…</div>}
+      {err && <div className="db-danger text-sm mono">Error: {err}</div>}
+
+      {!loading && rows.length > 0 && (
+        <>
+          <div className="db-card p-4">
+            <div className="text-sm font-medium mb-3">
+              {agg === "count" ? "Count" : `${agg} of ${data.measure}`} by {data.dimension}
+              {data.total != null && <span className="text-[11px] mono ml-2" style={{ color: "var(--db-muted)" }}>total: {data.total.toLocaleString()}</span>}
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={rows.slice(0, 20)} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <XAxis dataKey="key" tick={{ fontSize: 11 }} interval={0} angle={-25} textAnchor="end" height={60} />
+                <YAxis tick={{ fontSize: 11 }} width={48} />
+                <Tooltip />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                  {rows.slice(0, 20).map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="db-card p-0 overflow-auto max-h-[320px]">
+            <table className="w-full text-sm">
+              <thead><tr>
+                <th className="text-left px-3 py-2" style={{ color: "var(--db-muted)" }}>{data.dimension}</th>
+                <th className="text-right px-3 py-2" style={{ color: "var(--db-muted)" }}>{agg === "count" ? "count" : data.measure}</th>
+                <th className="text-right px-3 py-2" style={{ color: "var(--db-muted)" }}>rows</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-t" style={{ borderColor: "var(--db-border, #222)" }}>
+                    <td className="px-3 py-1.5">{r.key}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono">{Number(r.value).toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-right db-tabular-num mono" style={{ color: "var(--db-muted)" }}>{r.rows}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function QualityView({ baseUrl }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setErr(null);
+      try {
+        const r = await fetch(`${baseUrl}/quality`);
+        setData(await r.json());
+      } catch (e) { setErr(e.message); } finally { setLoading(false); }
+    })();
+  }, [baseUrl]);
+
+  if (loading) return <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Auditing…</div>;
+  if (err) return <div className="db-danger text-sm mono">Error: {err}</div>;
+  if (!data) return null;
+  if (data.enabled === false) {
+    return <div className="db-card p-5 text-sm" style={{ color: "var(--db-muted)" }}>
+      Data-quality module isn’t enabled. Enable <span className="db-accent">Data-quality audit</span> in Configure.
+    </div>;
+  }
+  return (
+    <div className="space-y-6" data-testid="quality-tab">
+      {(data.sheets || []).map((s) => {
+        const i = s.issues || {};
+        const scoreColor = s.score >= 80 ? "db-success" : s.score >= 50 ? "db-warning" : "db-danger";
+        return (
+          <div key={s.label} className="space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="db-chip db-chip-blue">{s.label}</span>
+              <span className="text-sm font-medium">{s.name}</span>
+              <span className={`db-tabular-num mono text-2xl ml-auto ${scoreColor}`}>{s.score}<span className="text-xs">/100</span></span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Metric label="Rows" value={s.row_count} />
+              <Metric label="Duplicate rows" value={i.duplicate_rows} warn={i.duplicate_rows > 0} />
+              <Metric label="Total/subtotal rows" value={i.total_subtotal_rows} warn={i.total_subtotal_rows > 0} />
+              <Metric label="Cols w/ missing" value={(i.missing || []).length} warn={(i.missing || []).length > 0} />
+            </div>
+            {(i.inconsistent_categories || []).length > 0 && (
+              <div className="db-card p-4">
+                <div className="text-sm font-medium mb-2 db-warning">Inconsistent category values</div>
+                {i.inconsistent_categories.map((c) => (
+                  <div key={c.column} className="text-[12px] mono mb-1">
+                    <span className="db-accent">{c.column}</span>: {c.groups.map((g) => g.variants.join(" / ")).join("  ·  ")}
+                  </div>
+                ))}
+              </div>
+            )}
+            {(i.missing || []).length > 0 && (
+              <div className="db-card p-4">
+                <div className="text-sm font-medium mb-2">Missing values</div>
+                <div className="flex flex-wrap gap-2">
+                  {i.missing.map((m) => (
+                    <span key={m.column} className="db-chip db-chip-grey">{m.column}: {m.missing} ({m.pct}%)</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(i.type_mismatches || []).length > 0 && (
+              <div className="db-card p-4">
+                <div className="text-sm font-medium mb-2 db-warning">Non-numeric values in numeric columns</div>
+                <div className="flex flex-wrap gap-2">
+                  {i.type_mismatches.map((t) => (
+                    <span key={t.column} className="db-chip db-chip-grey">{t.column}: {t.non_numeric}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div>
+      <div className="text-[10px] mono uppercase tracking-wider mb-1" style={{ color: "var(--db-muted)" }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+function Metric({ label, value, warn }) {
+  return (
+    <div className="db-card p-3">
+      <div className="text-[10px] mono uppercase tracking-wider" style={{ color: "var(--db-muted)" }}>{label}</div>
+      <div className={`db-tabular-num mono text-xl mt-1 ${warn ? "db-warning" : ""}`}>{typeof value === "number" ? value.toLocaleString() : value}</div>
     </div>
   );
 }

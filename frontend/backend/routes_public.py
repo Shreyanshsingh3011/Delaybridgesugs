@@ -142,6 +142,36 @@ async def get_dashboard(token: str):
     return {"enabled": True, "project": sess.get("name"), **dash}
 
 
+@router.get("/{token}/quality")
+async def get_quality(token: str):
+    """Data-quality audit: missing values, duplicates, inconsistent category casing,
+    subtotal/total rows, numeric type mismatches, and a score. Enabled via 'data_quality'."""
+    from server import db
+    from insights import build_data_quality
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("data_quality" in fields)):
+        return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    return {"enabled": True, "project": sess.get("name"), **build_data_quality(sheets)}
+
+
+@router.get("/{token}/pivot")
+async def get_pivot(token: str, dimension: Optional[str] = None, measure: Optional[str] = None,
+                    agg: str = "sum", include_totals: bool = False, sheet: Optional[str] = None):
+    """Pivot/segmentation: group any dimension by sum/avg/count of any measure.
+    Excludes subtotal/total rows by default. Enabled via 'pivot'."""
+    from server import db
+    from insights import build_pivot
+    sess = await _get_by_token(db, token)
+    fields = sess.get("export_fields") or []
+    if not ((not fields) or ("pivot" in fields)):
+        return {"enabled": False, "message": "Pivot module is not enabled for this export."}
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    return build_pivot(sheets, dimension=dimension, measure=measure, agg=agg,
+                       include_totals=include_totals, sheet_label=sheet)
+
+
 # -------- Composable export --------
 EXPORT_FIELDS = [
     "summary", "mode", "mode_badge", "totals", "risk_score", "status_breakdown",
