@@ -41,10 +41,11 @@ const FIELD_GROUPS = [
     ],
   },
   {
-    name: "Dynamic dashboard",
+    name: "Dynamic dashboard & AI",
     icon: Activity,
     fields: [
       { key: "data_dashboard", label: "Sheet data dashboard", hint: "Auto KPIs, charts & a data table built from your raw sheet rows" },
+      { key: "copilot", label: "Sheet copilot (AI Q&A)", hint: "Ask questions in plain language; answered from exact aggregates of your sheet" },
     ],
   },
 ];

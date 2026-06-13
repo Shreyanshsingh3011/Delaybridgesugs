@@ -7,7 +7,7 @@ import { PUBLIC_BASE } from "../api";
 import { safeCopy } from "../lib/clipboard";
 import {
   Copy, ChevronLeft, ExternalLink, Code2, Link as LinkIcon, RefreshCw,
-  Check, Globe, FileJson, LayoutDashboard,
+  Check, Globe, FileJson, LayoutDashboard, Sparkles, Send,
 } from "lucide-react";
 
 const SLICE_ENDPOINTS = [
@@ -25,7 +25,7 @@ const SLICE_ENDPOINTS = [
 const CHART_COLORS = ["#00aaff", "#7c5cff", "#ff8a3d", "#23c48e", "#ff5d5d", "#f7c948", "#36c5f0", "#a78bfa"];
 
 function tabs() {
-  return ["link", "dashboard", "preview", "snippets"];
+  return ["link", "dashboard", "copilot", "preview", "snippets"];
 }
 
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
@@ -150,7 +150,7 @@ function getDelayBridgeData() {
             <button key={t} onClick={() => setTab(t)}
                     data-testid={`export-tab-${t}`}
                     className={`db-step ${tab === t ? "active" : ""}`}>
-              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "preview" ? "Live preview" : "Code snippets"}
+              {t === "link" ? "Slice URLs" : t === "dashboard" ? "Dashboard" : t === "copilot" ? "Copilot" : t === "preview" ? "Live preview" : "Code snippets"}
             </button>
           ))}
         </div>
@@ -173,6 +173,10 @@ function getDelayBridgeData() {
               );
             })}
           </div>
+        )}
+
+        {tab === "copilot" && (
+          <CopilotView baseUrl={baseUrl} />
         )}
 
         {tab === "dashboard" && (
@@ -345,6 +349,92 @@ function DashboardView({ data, loading, err, onRefresh }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function CopilotView({ baseUrl }) {
+  const [q, setQ] = useState("");
+  const [sessionId, setSessionId] = useState(null);
+  const [msgs, setMsgs] = useState([]); // {role, text}
+  const [loading, setLoading] = useState(false);
+
+  const SUGGESTIONS = [
+    "Summarize this dataset in 3 bullet points",
+    "Which category has the highest total?",
+    "What columns are numeric and what are their totals?",
+    "Are there any data-quality issues I should know about?",
+  ];
+
+  const ask = async (text) => {
+    const question = (text ?? q).trim();
+    if (!question || loading) return;
+    setMsgs((m) => [...m, { role: "user", text: question }]);
+    setQ("");
+    setLoading(true);
+    try {
+      const r = await fetch(`${baseUrl}/copilot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: question, session_id: sessionId }),
+      });
+      const j = await r.json();
+      if (j.session_id) setSessionId(j.session_id);
+      setMsgs((m) => [...m, { role: "assistant", text: j.answer || j.message || "(no answer)" }]);
+    } catch (e) {
+      setMsgs((m) => [...m, { role: "assistant", text: `Error: ${e.message}` }]);
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="copilot-tab">
+      <div className="text-[11px] mono uppercase tracking-wider flex items-center gap-2"
+           style={{ color: "var(--db-muted)" }}>
+        <Sparkles className="w-3.5 h-3.5 db-accent" /> Ask anything about this sheet — answers are computed from exact aggregates.
+      </div>
+
+      {msgs.length === 0 && (
+        <div className="flex flex-wrap gap-2">
+          {SUGGESTIONS.map((s) => (
+            <button key={s} onClick={() => ask(s)} className="db-chip db-chip-blue" style={{ cursor: "pointer" }}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="db-card p-4 space-y-3 max-h-[420px] overflow-auto">
+        {msgs.length === 0 && (
+          <div className="text-sm" style={{ color: "var(--db-muted)" }}>
+            Tip: the copilot uses server-computed sums/counts, so totals are exact — not guessed from a sample.
+          </div>
+        )}
+        {msgs.map((m, i) => (
+          <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
+            <div className={`inline-block px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${m.role === "user" ? "db-chip-blue" : ""}`}
+                 style={m.role === "assistant" ? { background: "var(--db-card-2, rgba(255,255,255,0.04))" } : {}}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {loading && <div className="text-sm mono" style={{ color: "var(--db-muted)" }}>Thinking…</div>}
+      </div>
+
+      <div className="db-link-row">
+        <input
+          data-testid="copilot-input"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") ask(); }}
+          placeholder="Ask about totals, breakdowns, outliers, trends…"
+        />
+        <button onClick={() => ask()} disabled={loading} className="db-btn">
+          <Send className="w-3.5 h-3.5" /> Ask
+        </button>
+      </div>
+      <div className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
+        Needs an ANTHROPIC_API_KEY set on the server. POST to <span className="db-accent">{baseUrl}/copilot</span> with {"{ message }"}.
+      </div>
     </div>
   );
 }
