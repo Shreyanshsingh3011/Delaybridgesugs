@@ -129,18 +129,43 @@ async def get_dependencies(token: str):
 
 @router.get("/{token}/dashboard")
 async def get_dashboard(token: str):
-    """Generic data dashboard built from the raw sheet rows (auto KPIs/charts/table).
-    Enabled when 'data_dashboard' is selected in configure-export (or no field filter set)."""
+    """Composite dashboard representing ALL enabled export fields: the generic data
+    dashboard (auto KPIs/charts/table) plus the analysis sections (summary, totals,
+    status_breakdown, flags) and a copilot flag — each gated by configure-export."""
     from server import db
     from dashboards import build_data_dashboard
     sess = await _get_by_token(db, token)
     fields = sess.get("export_fields") or []
-    enabled = (not fields) or ("data_dashboard" in fields)
-    if not enabled:
-        return {"enabled": False, "message": "Data dashboard module is not enabled for this export."}
+
+    def want(f):
+        return (not fields) or (f in fields)
+
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    dash = build_data_dashboard(sheets)
-    return {"enabled": True, "project": sess.get("name"), **dash}
+    out = {"enabled": True, "project": sess.get("name"), "enabled_fields": fields}
+
+    # Data dashboard (KPIs / charts / table per sheet)
+    out["data_dashboard_enabled"] = want("data_dashboard")
+    if want("data_dashboard"):
+        out.update(build_data_dashboard(sheets))
+    else:
+        out["sheets"] = []
+
+    # Analysis sections (summary / totals / status_breakdown / flags)
+    analysis = sess.get("analysis") or {}
+    sections = {}
+    if want("summary") and analysis.get("summary") is not None:
+        sections["summary"] = analysis.get("summary")
+    if want("totals") and analysis.get("totals") is not None:
+        sections["totals"] = analysis.get("totals")
+    if want("status_breakdown") and analysis.get("status_breakdown") is not None:
+        sections["status_breakdown"] = analysis.get("status_breakdown")
+    if want("flags"):
+        sections["flags"] = analysis.get("flags", [])
+    sections["mode_badge"] = ("Variance Analysis Enabled" if analysis.get("mode") == "multi-sheet"
+                              else "Single Sheet Mode — Delay Analysis Active")
+    sections["copilot_enabled"] = want("copilot")
+    out["analysis"] = sections
+    return out
 
 
 @router.get("/{token}/quality")

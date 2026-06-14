@@ -84,6 +84,8 @@ export default function Viewer() {
         {loading && <div className="text-sm mono" style={{ color: "#8a8aa3" }}>Loading dashboard…</div>}
         {err && <div className="db-card p-4 text-sm" style={{ color: "#ff8a8a" }}>{err}</div>}
 
+        {!loading && dash && <AnalysisSections analysis={dash.analysis} />}
+
         {!loading && dash && sheets.length > 0 && (
           <>
             <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -155,6 +157,52 @@ export default function Viewer() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function AnalysisSections({ analysis }) {
+  if (!analysis) return null;
+  const { summary, totals, status_breakdown, flags, mode_badge } = analysis;
+  const hasAny = summary || totals || status_breakdown || (flags && flags.length >= 0);
+  if (!hasAny) return null;
+  const card = { background: "rgba(255,255,255,0.04)", border: "1px solid #1c1c2e", borderRadius: 12, padding: 16 };
+  return (
+    <div style={{ marginBottom: 18 }}>
+      {mode_badge && (
+        <div className="text-[11px] mono uppercase tracking-wider" style={{ color: "#00aaff", marginBottom: 8 }}>{mode_badge}</div>
+      )}
+      {summary && <div style={{ ...card, marginBottom: 12 }}><div className="text-sm">{summary}</div></div>}
+      {totals && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 12, marginBottom: 12 }}>
+          {Object.entries(totals).map(([k, v]) => (
+            <div key={k} style={card}>
+              <div className="text-[10px] mono uppercase tracking-wider" style={{ color: "#8a8aa3" }}>{k.replace(/_/g, " ")}</div>
+              <div className="db-tabular-num mono text-xl mt-1">{typeof v === "number" ? v.toLocaleString() : String(v)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {status_breakdown && Object.keys(status_breakdown).length > 0 && (
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div className="text-sm font-medium mb-2">Status breakdown</div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(status_breakdown).map(([k, v]) => (
+              <span key={k} className="db-chip db-chip-grey">{k}: {v}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {flags && flags.length > 0 && (
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div className="text-sm font-medium mb-2">Flags ({flags.length})</div>
+          <div className="space-y-1">
+            {flags.slice(0, 20).map((f, i) => (
+              <div key={i} className="text-[12px] mono">{f.message || f.title || JSON.stringify(f)}</div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
