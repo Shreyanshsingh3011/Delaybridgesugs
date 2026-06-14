@@ -41,6 +41,10 @@ function tabs() {
 export default function ExportPanel({ sessionMeta, exportFields, onBack }) {
   const token = sessionMeta.public_token;
   const baseUrl = `${PUBLIC_BASE}/${token}`;
+  const absOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const absBase = `${absOrigin}${baseUrl}`;
+  const dashboardLink = `${absBase}/dashboard`;
+  const viewerLink = `${absOrigin}/view?token=${token}`;
   const fieldsQuery = exportFields.length ? `?fields=${exportFields.join(",")}` : "";
   const composedUrl = `${baseUrl}/export${fieldsQuery}`;
 
@@ -167,6 +171,38 @@ function getDelayBridgeData() {
 
         {tab === "link" && (
           <div className="space-y-2" data-testid="slice-urls-list">
+            <div className="db-card p-4 mb-3" style={{ border: "1px solid var(--db-accent)", background: "rgba(0,170,255,0.06)" }}
+                 data-testid="pastable-link-card">
+              <div className="text-[11px] mono uppercase tracking-wider db-accent mb-2">
+                Paste this into Lovable / any app
+              </div>
+              <div className="db-link-row">
+                <span className="db-chip db-chip-blue min-w-[100px] justify-center">dashboard</span>
+                <input readOnly value={dashboardLink} data-testid="pastable-dashboard-input"
+                       onFocus={(e) => e.target.select()} />
+                <button data-testid="copy-pastable-dashboard" onClick={() => copy(dashboardLink, "pastable-dashboard")}
+                        className="db-btn db-btn-primary">
+                  {copiedKey === "pastable-dashboard" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedKey === "pastable-dashboard" ? "Copied" : "Copy link"}
+                </button>
+                <a href={dashboardLink} target="_blank" rel="noreferrer"
+                   className="db-btn db-btn-ghost"><ExternalLink className="w-3.5 h-3.5" /></a>
+              </div>
+              <div className="db-link-row mt-2">
+                <span className="db-chip db-chip-grey min-w-[100px] justify-center">viewer</span>
+                <input readOnly value={viewerLink} data-testid="pastable-viewer-input"
+                       onFocus={(e) => e.target.select()} />
+                <button data-testid="copy-pastable-viewer" onClick={() => copy(viewerLink, "pastable-viewer")}
+                        className="db-btn db-btn-ghost">
+                  {copiedKey === "pastable-viewer" ? <Check className="w-3.5 h-3.5 db-success" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+                <a href={viewerLink} target="_blank" rel="noreferrer"
+                   className="db-btn db-btn-ghost"><ExternalLink className="w-3.5 h-3.5" /></a>
+              </div>
+              <div className="text-[11px] mono mt-2" style={{ color: "var(--db-muted)" }}>
+                The <span className="db-accent">dashboard</span> link returns the full export (summary, totals, status, sheets, charts, flags, copilot). The <span className="db-accent">viewer</span> link opens a ready-made page.
+              </div>
+            </div>
             {SLICE_ENDPOINTS.map((s) => {
               const url = `${baseUrl}${s.path}`;
               return (
@@ -291,7 +327,7 @@ function getDelayBridgeData() {
           <ChevronLeft className="w-4 h-4" /> Configure
         </button>
         <div className="text-xs mono" style={{ color: "var(--db-muted)" }}>
-          Paste this URL into Lovable → fetch() and you’re done.
+          Copy the dashboard link above → paste into Lovable → done.
         </div>
       </div>
     </div>
