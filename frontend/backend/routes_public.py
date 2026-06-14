@@ -150,7 +150,7 @@ async def get_dashboard(token: str):
     else:
         out["sheets"] = []
 
-    # Analysis sections (summary / totals / status_breakdown / flags)
+    # Analysis sections (summary / totals / status_breakdown / flags + extended fields)
     analysis = sess.get("analysis") or {}
     sections = {}
     if want("summary") and analysis.get("summary") is not None:
@@ -161,10 +161,57 @@ async def get_dashboard(token: str):
         sections["status_breakdown"] = analysis.get("status_breakdown")
     if want("flags"):
         sections["flags"] = analysis.get("flags", [])
+    # Extended analytical outputs (delay-analysis), included only if enabled + present
+    for f in ("risk_score", "top_delay_reasons", "correlation_matrix",
+              "dependency_chains", "person_ranking", "department_ranking",
+              "timeline_correlation", "tat_performance", "variance"):
+        if want(f) and analysis.get(f) is not None:
+            sections[f] = analysis.get(f)
     sections["mode_badge"] = ("Variance Analysis Enabled" if analysis.get("mode") == "multi-sheet"
                               else "Single Sheet Mode — Delay Analysis Active")
     sections["copilot_enabled"] = want("copilot")
     out["analysis"] = sections
+
+    # Computed modules (from raw sheet rows) — each gated by export field and isolated
+    modules = {}
+
+    def add(name, fn):
+        if not want(name):
+            return
+        try:
+            modules[name] = fn()
+        except Exception as e:  # one module failing must not break the rest
+            logger.warning("dashboard module %s failed: %s", name, e)
+
+    try:
+        from insights import (build_data_quality, build_pivot, build_anomalies,
+                              build_digest, build_recommendations, build_whatif)
+        from forecast import build_forecast
+        add("data_quality", lambda: build_data_quality(sheets))
+        add("pivot", lambda: build_pivot(sheets))
+        add("anomalies", lambda: build_anomalies(sheets))
+        add("digest", lambda: build_digest(sheets))
+        add("recommendations", lambda: build_recommendations(sheets))
+        add("whatif", lambda: build_whatif(sheets))
+        add("forecast", lambda: build_forecast(sheets))
+    except Exception as e:
+        logger.warning("dashboard module import failed: %s", e)
+
+    if want("trends"):
+        try:
+            from snapshots import compute_trends
+            snaps = []
+            async for it in db.snapshots.find({"token": token}).sort("date", 1):
+                snaps.append(it)
+            t = compute_trends(snaps)
+            t["ready"] = len(t.get("series", [])) >= 2
+            t["snapshot_count"] = len(t.get("series", []))
+            modules["trends"] = t
+        except Exception as e:
+            logger.warning("dashboard module trends failed: %s", e)
+
+    if modules:
+        out["modules"] = modules
     return out
 
 
