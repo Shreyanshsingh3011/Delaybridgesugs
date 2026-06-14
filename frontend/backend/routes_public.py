@@ -801,3 +801,137 @@ async def get_alerts(token: str, limit: int = 100):
     async for it in cur:
         items.append(it)
     return {"count": len(items), "alerts": items}
+
+
+import uuid
+from datetime import datetime, timezone
+from fastapi import Body
+from people import column_map, extract_people
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def _connected_sheets(sess):
+    return [s for s in sess.get("sheets", []) if s.get("connected")]
+
+def _want(sess, key):
+    fields = sess.get("export_fields") or []
+    return (not fields) or (key in fields)
+
+@router.get("/{token}/column-map")
+async def get_column_map(token: str):
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "concerns"):
+        raise HTTPException(404, "Not enabled")
+    return {s.get("label"): column_map(s.get("columns", [])) for s in _connected_sheets(sess)}
+
+@router.post("/{token}/concerns")
+async def create_concern(token: str, body: dict = Body(...)):
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "concerns"):
+        raise HTTPException(404, "Not enabled")
+    people, depts = extract_people(_connected_sheets(sess))
+    for p in people:
+        await db.people.update_one({"id": (p["email"] or p["name"]).lower()},
+                                   {"$set": {"data": {**p, "token": token}}}, upsert=True)
+    for d in depts:
+        await db.departments.update_one({"id": d.lower()},
+                                        {"$set": {"data": {"name": d, "token": token}}}, upsert=True)
+    cid = uuid.uuid4().hex
+    doc = {"token": token, "raised_by": body.get("raised_by"),
+           "raised_by_department": body.get("raised_by_department"),
+           "target_department": body.get("target_department"),
+           "sheet_label": body.get("sheet_label"), "activity_ref": body.get("activity_ref"),
+           "title": body.get("title"), "detail": body.get("detail"),
+           "severity": body.get("severity", "medium"), "status": "open", "created_at": _now_iso()}
+    await db.concerns.insert_one({"id": cid, "data": doc})
+    return {"ok": True, "id": cid, "status": "open"}
+
+@router.get("/{token}/concerns")
+async def list_concerns(token: str, status: str = None, department: str = None):
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "concerns"):
+        raise HTTPException(404, "Not enabled")
+    out = []
+    async for row in db.concerns.find({}):
+        d = row.get("data", {})
+        if d.get("token") != token: continue
+        if status and d.get("status") != status: continue
+        if department and d.get("target_department") != department: continue
+        out.append({"id": row["id"], **d})
+    by_dept = {}
+    for c in out:
+        dep = c.get("target_department") or "—"
+        by_dept.setdefault(dep, {"open": 0, "ack": 0, "resolved": 0, "total": 0})
+        st = c.get("status", "open")
+        by_dept[dep][st] = by_dept[dep].get(st, 0) + 1
+        by_dept[dep]["total"] += 1
+    return {"concerns": out, "by_department": by_dept}
+
+@router.patch("/{token}/concerns/{cid}")
+async def update_concern(token: str, cid: str, body: dict = Body(...)):
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "concerns"):
+        raise HTTPException(404, "Not enabled")
+    row = await db.concerns.find_one({"id": cid})
+    if not row:
+        raise HTTPException(404, "Concern not found")
+    d = row.get("data", {})
+    d["status"] = body.get("status", d.get("status"))
+    await db.concerns.update_one({"id": cid}, {"$set": {"data": d}})
+    await db.actions.insert_one({"id": uuid.uuid4().hex, "data": {
+        "token": token, "concern_id": cid, "action_type": "status_change",
+        "note": body.get("note"), "to_status": d["status"], "created_at": _now_iso()}})
+    return {"ok": True, "id": cid, "status": d["status"]}
+
+@router.post("/{token}/reminders")
+async def create_reminder(token: str, body: dict = Body(...)):
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "concerns"):
+        raise HTTPException(404, "Not enabled")
+    rid = uuid.uuid4().hex
+    doc = {"token": token, "related_type": body.get("related_type"),
+           "related_id": body.get("related_id"), "recipient_email": body.get("recipient_email"),
+           "subject": body.get("subject"), "body": body.get("body"),
+           "recurrence": body.get("recurrence", "none"), "status": "pending",
+           "schedule_at": body.get("schedule_at") or _now_iso()}
+    await db.reminders.insert_one({"id": rid, "data": doc})
+    return {"ok": True, "id": rid}
+
+@router.get("/{token}/reminders")
+async def list_reminders(token: str, status: str = None):
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "concerns"):
+        raise HTTPException(404, "Not enabled")
+    out = []
+    async for row in db.reminders.find({}):
+        d = row.get("data", {})
+        if d.get("token") != token: continue
+        if status and d.get("status", "pending") != status: continue
+        out.append({"id": row["id"], **d})
+    return {"reminders": out}
+
+@router.get("/{token}/harmonize")
+async def harmonize(token: str):
+    import re as _re
+    from server import db
+    sess = await _get_by_token(db, token)
+    if not _want(sess, "harmonize"):
+        raise HTTPException(404, "Not enabled")
+    seen, suggestions = {}, []
+    for s in _connected_sheets(sess):
+        for c in s.get("columns", []):
+            name = c.get("name", "")
+            norm = _re.sub(r"\s+", " ", name).strip().lower()
+            canon = seen.setdefault(norm, name)
+            if name != canon:
+                suggestions.append({"sheet_label": s.get("label"), "column": name,
+                                    "issue": "Heading differs from other sheets",
+                                    "current": name, "suggested": canon})
+    return {"suggestions": suggestions}
