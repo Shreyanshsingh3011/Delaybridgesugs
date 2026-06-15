@@ -58,6 +58,37 @@ class FlagAction(BaseModel):
     note: Optional[str] = None
 
 
+class CopilotRequest(ChatRequest):
+    sheets: Optional[List[str]] = None  # multi-sheet copilot: combine context across these labels
+
+
+# ============ Concerns / Reminders ============
+class ConcernCreate(BaseModel):
+    raised_by: str
+    raised_by_department: Optional[str] = None
+    target_department: str
+    sheet_label: Optional[str] = None
+    activity_ref: Optional[str] = None
+    title: str
+    detail: Optional[str] = None
+    severity: Optional[str] = "medium"
+
+
+class ConcernUpdate(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+class ReminderCreate(BaseModel):
+    related_type: str
+    related_id: Optional[str] = None
+    recipient_email: EmailStr
+    subject: str
+    body: str
+    schedule_at: Optional[str] = None
+    recurrence: Optional[str] = "none"
+
+
 # ============ Public Shapes ============
 class SheetMeta(BaseModel):
     label: str
