@@ -822,7 +822,14 @@ async def get_column_map(token: str):
     sess = await _get_by_token(db, token)
     if not _want(sess, "concerns"):
         raise HTTPException(404, "Not enabled")
-    return {s.get("label"): column_map(s.get("columns", [])) for s in _connected_sheets(sess)}
+    out = {}
+    for s in _connected_sheets(sess):
+        try:
+            out[s.get("label")] = column_map(s.get("columns") or [])
+        except Exception:
+            out[s.get("label")] = {"owner": None, "dept": None, "email": None,
+                                   "status": None, "date": None}
+    return out
 
 @router.post("/{token}/concerns")
 async def create_concern(token: str, body: dict = Body(...)):
@@ -924,8 +931,10 @@ async def harmonize(token: str):
         raise HTTPException(404, "Not enabled")
     seen, suggestions = {}, []
     for s in _connected_sheets(sess):
-        for c in s.get("columns", []):
-            name = c.get("name", "")
+        for c in (s.get("columns") or []):
+            name = c.get("name", "") if isinstance(c, dict) else str(c)
+            if not name:
+                continue
             norm = _re.sub(r"\s+", " ", name).strip().lower()
             canon = seen.setdefault(norm, name)
             if name != canon:
