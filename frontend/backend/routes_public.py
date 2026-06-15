@@ -930,15 +930,22 @@ async def harmonize(token: str):
     if not _want(sess, "harmonize"):
         raise HTTPException(404, "Not enabled")
     seen, suggestions = {}, []
-    for s in _connected_sheets(sess):
-        for c in (s.get("columns") or []):
-            name = c.get("name", "") if isinstance(c, dict) else str(c)
-            if not name:
+    try:
+        for s in _connected_sheets(sess):
+            cols = s.get("columns") or []
+            if not isinstance(cols, (list, tuple)):
                 continue
-            norm = _re.sub(r"\s+", " ", name).strip().lower()
-            canon = seen.setdefault(norm, name)
-            if name != canon:
-                suggestions.append({"sheet_label": s.get("label"), "column": name,
-                                    "issue": "Heading differs from other sheets",
-                                    "current": name, "suggested": canon})
+            for c in cols:
+                name = c.get("name", "") if isinstance(c, dict) else str(c)
+                if not name:
+                    continue
+                norm = _re.sub(r"\s+", " ", name).strip().lower()
+                canon = seen.setdefault(norm, name)
+                if name != canon:
+                    suggestions.append({"sheet_label": s.get("label"), "column": name,
+                                        "issue": "Heading differs from other sheets",
+                                        "current": name, "suggested": canon})
+    except Exception as e:
+        logger.warning("harmonize failed: %s", e)
+        return {"suggestions": [], "note": "harmonize encountered an issue and returned no suggestions"}
     return {"suggestions": suggestions}
