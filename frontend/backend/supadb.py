@@ -294,20 +294,20 @@ class SupaDB:
             cols[name] = Collection(self, name)
         return cols[name]
 
-    async def raw_select(self, name, filters=None):
-    """Query a Postgres view or table directly via PostgREST."""
-    params = [("select", "*")]
-    for k, v in (filters or {}).items():
-        params.append((k, f"eq.{v}"))
-    r = await self.client.get(f"{SUPABASE_URL}/rest/v1/{name}", params=params, headers=_headers())
-    r.raise_for_status()
-    return r.json()
+      async def raw_select(self, name, filters=None):
+        """Query a Postgres view or table directly via PostgREST."""
+        params = [("select", "*")]
+        for k, v in (filters or {}).items():
+            params.append((k, f"eq.{v}"))
+        r = await self.client.get(f"{SUPABASE_URL}/rest/v1/{name}", params=params, headers=_headers())
+        r.raise_for_status()
+        return r.json()
 
-async def rpc(self, fn_name, args=None):
-    """Call a Postgres function via PostgREST /rpc/."""
-    r = await self.client.post(f"{SUPABASE_URL}/rest/v1/rpc/{fn_name}", json=args or {}, headers=_headers())
-    r.raise_for_status()
-    return r.json()
+    async def rpc(self, fn_name, args=None):
+        """Call a Postgres function via PostgREST /rpc/."""
+        r = await self.client.post(f"{SUPABASE_URL}/rest/v1/rpc/{fn_name}", json=args or {}, headers=_headers())
+        r.raise_for_status()
+        return r.json()
 
     async def aclose(self):
         try:
