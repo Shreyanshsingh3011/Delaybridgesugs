@@ -1,3 +1,4 @@
+
 """Public routes — accessed by public token (e.g. for Lovable dashboard, Apps Script).
 No JWT required. Read mostly; some mutating endpoints (ack/resolve, chat, refresh)."""
 import os
