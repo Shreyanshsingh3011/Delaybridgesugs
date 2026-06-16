@@ -294,7 +294,7 @@ class SupaDB:
             cols[name] = Collection(self, name)
         return cols[name]
 
-      async def raw_select(self, name, filters=None):
+    async def raw_select(self, name, filters=None):
         """Query a Postgres view or table directly via PostgREST."""
         params = [("select", "*")]
         for k, v in (filters or {}).items():
