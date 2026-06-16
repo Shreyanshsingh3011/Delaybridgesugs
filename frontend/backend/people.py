@@ -1,3 +1,4 @@
+
 """Dynamic owner/department extraction from sheet rows via column-name heuristics.
 
 Sheets vary in column naming, so we detect the relevant columns by regex rather than
