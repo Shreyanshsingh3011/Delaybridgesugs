@@ -303,11 +303,19 @@ class SupaDB:
         r.raise_for_status()
         return r.json()
 
-    async def rpc(self, fn_name, args=None):
-        """Call a Postgres function via PostgREST /rpc/."""
+       async def rpc(self, fn_name, args=None):
+        """Call a Postgres function exposed via PostgREST's /rpc/ endpoint."""
         r = await self.client.post(f"{SUPABASE_URL}/rest/v1/rpc/{fn_name}", json=args or {}, headers=_headers())
         r.raise_for_status()
         return r.json()
+
+    async def raw_upsert(self, name, record):
+        """Upsert a flat record into a plain Postgres table (not the jsonb collection wrapper)."""
+        r = await self.client.post(
+            f"{SUPABASE_URL}/rest/v1/{name}", json=record,
+            headers=_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+        )
+        r.raise_for_status()
 
     async def aclose(self):
         try:
