@@ -167,7 +167,7 @@ def _build_sheet_record(
     label: str, url: str, name: Optional[str], rows_raw, status_msg: str, connected: bool,
     header_mapping: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-       headers, resolved_rows = resolve_headers(rows_raw or [], header_mapping)
+    headers, resolved_rows = resolve_headers(rows_raw or [], header_mapping)
     protected = set((header_mapping or {}).get("column_overrides", {}).values())
     headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
     detected = detect_columns(headers) if headers else {}
@@ -335,7 +335,7 @@ async def _run_and_persist_analysis(db, sess: Dict[str, Any], sheets: List[Dict[
     hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
     hm_by_label = {r["sheet_label"]: r for r in (hm_list or [])}
 
-       normalized_by_label: Dict[str, List[Dict[str, Any]]] = {}
+    normalized_by_label: Dict[str, List[Dict[str, Any]]] = {}
     for s in sheets:
         hm = hm_by_label.get(s["label"])
         resolved_headers, resolved_rows = resolve_headers(s.get("rows_raw") or [], hm)
