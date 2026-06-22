@@ -3,6 +3,7 @@ import os
 import uuid
 import secrets
 from header_detector import resolve_headers
+from sheet_cleaner import clean_sheet
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
