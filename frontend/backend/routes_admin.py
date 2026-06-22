@@ -253,7 +253,7 @@ async def refresh_sheet(sid: str, label: str, current=Depends(get_current_user))
             {"$set": {"sheets.$.connected": False, "sheets.$.status_msg": msg}},
         )
         raise HTTPException(status_code=400, detail=msg)
-token = sess.get("public_token", "")
+    token = sess.get("public_token", "")
     hm_rows = await db.raw_select("dbridge_header_mappings", {"token": token, "sheet_label": label})
     hm = hm_rows[0] if hm_rows else None
     resolved_headers, resolved_rows = resolve_headers(rows_raw, hm)
