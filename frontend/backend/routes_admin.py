@@ -196,7 +196,7 @@ async def add_sheet(sid: str, payload: SheetAdd, current=Depends(get_current_use
     if label in used:
         raise HTTPException(status_code=400, detail=f"Sheet label {label} already used.")
     ok, msg, rows_raw = fetch_apps_script(payload.url)
-    token = sess.get("public_token", "")
+token = sess.get("public_token", "")
     hm_rows = await db.raw_select("dbridge_header_mappings", {"token": token, "sheet_label": label})
     hm = hm_rows[0] if hm_rows else None
     record = _build_sheet_record(label, payload.url, None, rows_raw, msg, ok, header_mapping=hm)
