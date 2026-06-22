@@ -167,7 +167,9 @@ def _build_sheet_record(
     label: str, url: str, name: Optional[str], rows_raw, status_msg: str, connected: bool,
     header_mapping: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    headers, resolved_rows = resolve_headers(rows_raw or [], header_mapping)
+       headers, resolved_rows = resolve_headers(rows_raw or [], header_mapping)
+    protected = set((header_mapping or {}).get("column_overrides", {}).values())
+    headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
     detected = detect_columns(headers) if headers else {}
     return {
         "label": label,
@@ -183,6 +185,7 @@ def _build_sheet_record(
         "mapping": detected,  # default to detected
         "rows_raw": rows_raw or [],
         "rows_resolved": resolved_rows,
+        "pruned_empty_columns": n_pruned,
     }
 
 
@@ -258,6 +261,8 @@ async def refresh_sheet(sid: str, label: str, current=Depends(get_current_user))
     hm_rows = await db.raw_select("dbridge_header_mappings", {"token": token, "sheet_label": label})
     hm = hm_rows[0] if hm_rows else None
     resolved_headers, resolved_rows = resolve_headers(rows_raw, hm)
+    protected = set((hm or {}).get("column_overrides", {}).values())
+    resolved_headers, resolved_rows, n_pruned = clean_sheet(resolved_headers, resolved_rows, protected)
     mapping = target.get("mapping") or detect_columns(resolved_headers)
     normalized = normalize_rows(resolved_rows, mapping)
     await db.sessions.update_one(
@@ -271,6 +276,7 @@ async def refresh_sheet(sid: str, label: str, current=Depends(get_current_user))
             "sheets.$.connected": True,
             "sheets.$.status_msg": msg,
             "sheets.$.data_quality": data_quality(resolved_rows, normalized),
+            "sheets.$.pruned_empty_columns": n_pruned,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }},
     )
@@ -329,10 +335,12 @@ async def _run_and_persist_analysis(db, sess: Dict[str, Any], sheets: List[Dict[
     hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
     hm_by_label = {r["sheet_label"]: r for r in (hm_list or [])}
 
-    normalized_by_label: Dict[str, List[Dict[str, Any]]] = {}
+       normalized_by_label: Dict[str, List[Dict[str, Any]]] = {}
     for s in sheets:
         hm = hm_by_label.get(s["label"])
         resolved_headers, resolved_rows = resolve_headers(s.get("rows_raw") or [], hm)
+        protected = set((hm or {}).get("column_overrides", {}).values())
+        resolved_headers, resolved_rows, _ = clean_sheet(resolved_headers, resolved_rows, protected)
         mapping = s.get("mapping") or s.get("detected_mapping") or detect_columns(resolved_headers)
         normalized_by_label[s["label"]] = normalize_rows(resolved_rows, mapping)
 
