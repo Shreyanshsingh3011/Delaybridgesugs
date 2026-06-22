@@ -1065,3 +1065,47 @@ async def get_alerts(token: str, limit: int = 100):
     async for it in cur:
         items.append(it)
     return {"count": len(items), "alerts": items}
+
+# ── Header detection support ──────────────────────────────────────────────────
+
+@router.get("/{token}/raw-head")
+async def get_raw_head(token: str, sheet: str = "", rows: int = 10):
+    from server import db
+    sess = await _get_by_token(db, token)
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    if sheet:
+        target = next((s for s in sheets if s["label"] == sheet), None)
+    else:
+        target = sheets[0] if sheets else None
+    if not target:
+        raise HTTPException(status_code=404, detail="Sheet not found.")
+    rows_raw = (target.get("rows_raw") or [])[:max(1, min(rows, 50))]
+    if not rows_raw:
+        return {"sheet": sheet or target["label"], "raw_rows": [], "keys": []}
+    keys = list(rows_raw[0].keys())
+    raw_rows = [[r.get(k) for k in keys] for r in rows_raw]
+    return {"sheet": target["label"], "keys": keys, "raw_rows": raw_rows}
+
+
+class HeaderMappingCreate(BaseModel):
+    sheet_label: str
+    header_row_index: Optional[int] = None
+    column_overrides: Optional[Dict[str, Any]] = None
+
+
+@router.post("/{token}/header-mapping")
+async def upsert_header_mapping(token: str, payload: HeaderMappingCreate):
+    from server import db
+    from datetime import datetime, timezone
+    await _get_by_token(db, token)
+    record_id = f"{token}__{payload.sheet_label}"
+    record = {
+        "id": record_id,
+        "token": token,
+        "sheet_label": payload.sheet_label,
+        "header_row_index": payload.header_row_index,
+        "column_overrides": payload.column_overrides or {},
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.raw_upsert("dbridge_header_mappings", record)
+    return {"ok": True, "id": record_id}
