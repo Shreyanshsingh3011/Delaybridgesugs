@@ -36,20 +36,29 @@ router = APIRouter(prefix="/api/public")
 
 
 async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
-    hm_by_label = {r["sheet_label"]: r for r in (hm_list or [])}
+    try:
+        hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
+        hm_by_label = {r["sheet_label"]: r for r in (hm_list or [])}
+    except Exception as e:
+        logger.warning("_clean_sheets: failed to fetch header mappings: %s", e)
+        hm_by_label = {}
     cleaned = []
     for s in sheets:
-        s = dict(s)
-        rows_raw = s.get("rows_raw") or []
-        hm = hm_by_label.get(s.get("label", ""))
-        protected = set((hm or {}).get("column_overrides", {}).values())
-        headers, resolved_rows = resolve_headers(rows_raw, hm)
-        headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
-        s["rows_raw"] = resolved_rows
-        s["headers"] = headers
-        s["columns"] = len(headers)
-        s["pruned_empty_columns"] = n_pruned
+        orig = s
+        try:
+            s = dict(s)
+            rows_raw = s.get("rows_raw") or []
+            hm = hm_by_label.get(s.get("label", ""))
+            protected = set((hm or {}).get("column_overrides", {}).values())
+            headers, resolved_rows = resolve_headers(rows_raw, hm)
+            headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
+            s["rows_raw"] = resolved_rows
+            s["headers"] = headers
+            s["columns"] = len(headers)
+            s["pruned_empty_columns"] = n_pruned
+        except Exception as e:
+            logger.warning("_clean_sheets: sheet %r cleaning failed, using raw: %s", orig.get("label"), e)
+            s = orig
         cleaned.append(s)
     return cleaned
 APPS_SCRIPT_SAMPLE = """function doGet(e) {
