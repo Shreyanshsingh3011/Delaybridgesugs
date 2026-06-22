@@ -27,12 +27,31 @@ from chatbot import (
 from sheet_fetcher import fetch_apps_script
 from normalizer import normalize_rows
 from routes_admin import _run_and_persist_analysis
+from header_detector import resolve_headers
+from sheet_cleaner import clean_sheet
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/public")
 
 
+async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
+    hm_by_label = {r["sheet_label"]: r for r in (hm_list or [])}
+    cleaned = []
+    for s in sheets:
+        s = dict(s)
+        rows_raw = s.get("rows_raw") or []
+        hm = hm_by_label.get(s.get("label", ""))
+        protected = set((hm or {}).get("column_overrides", {}).values())
+        headers, resolved_rows = resolve_headers(rows_raw, hm)
+        headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
+        s["rows_raw"] = resolved_rows
+        s["headers"] = headers
+        s["columns"] = len(headers)
+        s["pruned_empty_columns"] = n_pruned
+        cleaned.append(s)
+    return cleaned
 APPS_SCRIPT_SAMPLE = """function doGet(e) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const data = sheet.getDataRange().getValues();
@@ -151,6 +170,7 @@ async def get_dashboard(token: str):
         return (not fields) or (f in fields)
 
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    sheets = await _clean_sheets(db, token, sheets)
     out = {"enabled": True, "project": sess.get("name"), "enabled_fields": fields}
 
     # Data dashboard (KPIs / charts / table per sheet)
