@@ -2,6 +2,7 @@
 import os
 import uuid
 import secrets
+from header_detector import resolve_headers
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
@@ -161,15 +162,11 @@ async def delete_session(sid: str, current=Depends(get_current_user)):
 
 
 # -------- Sheets --------
-def _build_sheet_record(label: str, url: str, name: Optional[str], rows_raw, status_msg: str, connected: bool) -> Dict[str, Any]:
-    headers: List[str] = []
-    if rows_raw:
-        seen = []
-        for r in rows_raw[:10]:
-            for k in r.keys():
-                if k not in seen:
-                    seen.append(k)
-        headers = seen
+def _build_sheet_record(
+    label: str, url: str, name: Optional[str], rows_raw, status_msg: str, connected: bool,
+    header_mapping: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    headers, resolved_rows = resolve_headers(rows_raw or [], header_mapping)
     detected = detect_columns(headers) if headers else {}
     return {
         "label": label,
@@ -184,6 +181,7 @@ def _build_sheet_record(label: str, url: str, name: Optional[str], rows_raw, sta
         "detected_mapping": detected,
         "mapping": detected,  # default to detected
         "rows_raw": rows_raw or [],
+        "rows_resolved": resolved_rows,
     }
 
 
@@ -197,12 +195,16 @@ async def add_sheet(sid: str, payload: SheetAdd, current=Depends(get_current_use
     label = payload.label or _next_label(used)
     if label in used:
         raise HTTPException(status_code=400, detail=f"Sheet label {label} already used.")
-    ok, msg, rows_raw = fetch_apps_script(payload.url)
-    record = _build_sheet_record(label, payload.url, None, rows_raw, msg, ok)
+      ok, msg, rows_raw = fetch_apps_script(payload.url)
+    token = sess.get("public_token", "")
+    hm_rows = await db.raw_select("dbridge_header_mappings", {"token": token, "sheet_label": label})
+    hm = hm_rows[0] if hm_rows else None
+    record = _build_sheet_record(label, payload.url, None, rows_raw, msg, ok, header_mapping=hm)
     # quality only if connected
     if ok:
-        normalized = normalize_rows(rows_raw, record["mapping"])
-        record["data_quality"] = data_quality(rows_raw, normalized)
+        resolved = record.get("rows_resolved") or rows_raw
+        normalized = normalize_rows(resolved, record["mapping"])
+        record["data_quality"] = data_quality(resolved, normalized)
     await db.sessions.update_one(
         {"id": sid, "owner_id": current["id"]},
         {"$push": {"sheets": record}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
@@ -251,17 +253,23 @@ async def refresh_sheet(sid: str, label: str, current=Depends(get_current_user))
             {"$set": {"sheets.$.connected": False, "sheets.$.status_msg": msg}},
         )
         raise HTTPException(status_code=400, detail=msg)
-    mapping = target.get("mapping") or detect_columns(list((rows_raw[0] or {}).keys()) if rows_raw else [])
-    normalized = normalize_rows(rows_raw, mapping)
+      token = sess.get("public_token", "")
+    hm_rows = await db.raw_select("dbridge_header_mappings", {"token": token, "sheet_label": label})
+    hm = hm_rows[0] if hm_rows else None
+    resolved_headers, resolved_rows = resolve_headers(rows_raw, hm)
+    mapping = target.get("mapping") or detect_columns(resolved_headers)
+    normalized = normalize_rows(resolved_rows, mapping)
     await db.sessions.update_one(
         {"id": sid, "owner_id": current["id"], "sheets.label": label},
         {"$set": {
             "sheets.$.rows": len(rows_raw),
             "sheets.$.rows_raw": rows_raw,
+            "sheets.$.rows_resolved": resolved_rows,
+            "sheets.$.headers": resolved_headers,
             "sheets.$.last_fetched": datetime.now(timezone.utc).isoformat(),
             "sheets.$.connected": True,
             "sheets.$.status_msg": msg,
-            "sheets.$.data_quality": data_quality(rows_raw, normalized),
+            "sheets.$.data_quality": data_quality(resolved_rows, normalized),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }},
     )
@@ -316,10 +324,16 @@ async def analyze(sid: str, current=Depends(get_current_user)):
 
 
 async def _run_and_persist_analysis(db, sess: Dict[str, Any], sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    token = sess.get("public_token", "")
+    hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
+    hm_by_label = {r["sheet_label"]: r for r in (hm_list or [])}
+
     normalized_by_label: Dict[str, List[Dict[str, Any]]] = {}
     for s in sheets:
-        mapping = s.get("mapping") or s.get("detected_mapping") or {}
-        normalized_by_label[s["label"]] = normalize_rows(s.get("rows_raw") or [], mapping)
+        hm = hm_by_label.get(s["label"])
+        resolved_headers, resolved_rows = resolve_headers(s.get("rows_raw") or [], hm)
+        mapping = s.get("mapping") or s.get("detected_mapping") or detect_columns(resolved_headers)
+        normalized_by_label[s["label"]] = normalize_rows(resolved_rows, mapping)
 
     primary_label = sorted(normalized_by_label.keys())[0]
     primary_rows = normalized_by_label[primary_label]
