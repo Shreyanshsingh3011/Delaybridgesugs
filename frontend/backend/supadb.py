@@ -303,7 +303,7 @@ class SupaDB:
         r.raise_for_status()
         return r.json()
 
-  async def rpc(self, fn_name, args=None):
+   async def rpc(self, fn_name, args=None):
         """Call a Postgres function exposed via PostgREST's /rpc/ endpoint."""
         r = await self.client.post(f"{SUPABASE_URL}/rest/v1/rpc/{fn_name}", json=args or {}, headers=_headers())
         r.raise_for_status()
