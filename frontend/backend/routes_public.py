@@ -27,7 +27,8 @@ from sheet_fetcher import fetch_apps_script
 from normalizer import normalize_rows
 from routes_admin import _run_and_persist_analysis
 from header_detector import resolve_headers, detect_header_row
-from sheet_cleaner import clean_sheet, compute_type_kpis
+from sheet_cleaner import clean_sheet
+from sheet_loader import load_clean_sheets, compute_type_kpis
 
 
 logger = logging.getLogger(__name__)
@@ -196,7 +197,7 @@ async def get_dependencies(token: str):
     from server import db
     sess = await _get_by_token(db, token)
     analysis = _ensure_analysis(sess)
-        return analysis.get("dependency_chains") or {}
+    return analysis.get("dependency_chains") or {}
 
 
 @router.get("/{token}/type-analysis")
