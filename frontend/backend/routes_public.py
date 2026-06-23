@@ -298,7 +298,6 @@ async def get_quality(token: str):
     if not _want_field(sess, "data_quality"):
         return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     return {"enabled": True, "project": sess.get("name"), **build_data_quality(sheets)}
 
 
@@ -313,7 +312,6 @@ async def get_pivot(token: str, dimension: Optional[str] = None, measure: Option
     if not _want_field(sess, "pivot"):
         return {"enabled": False, "message": "Pivot module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     return build_pivot(sheets, dimension=dimension, measure=measure, agg=agg,
                        include_totals=include_totals, sheet_label=sheet)
 
@@ -330,7 +328,6 @@ async def get_forecast(token: str, periods: int = 6, date: Optional[str] = None,
     if not _want_field(sess, "forecast"):
         return {"enabled": False, "message": "Forecast module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     return build_forecast(sheets, periods=max(1, min(36, periods)), date_col=date,
                           measure_col=measure, granularity=granularity, sheet_label=sheet)
 
@@ -345,7 +342,6 @@ async def get_anomalies(token: str, column: Optional[str] = None, sensitivity: s
     if not _want_field(sess, "anomalies"):
         return {"enabled": False, "message": "Anomaly module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     return build_anomalies(sheets, column=column, sensitivity=sensitivity, sheet_label=sheet)
 
 
@@ -359,7 +355,6 @@ async def get_digest(token: str):
     if not _want_field(sess, "digest"):
         return {"enabled": False, "message": "Digest module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     digest = build_digest(sheets)
     generated_by = "computed"
     summary = " ".join(digest.get("facts", [])[:8])
@@ -388,7 +383,6 @@ async def get_recommendations(token: str):
     if not _want_field(sess, "recommendations"):
         return {"enabled": False, "message": "Recommendations module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     return {"enabled": True, "project": sess.get("name"), **build_recommendations(sheets)}
 
 
@@ -412,7 +406,6 @@ async def get_whatif(token: str, dimension: Optional[str] = None, measure: Optio
                 except ValueError:
                     pass
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     return build_whatif(sheets, dimension=dimension, measure=measure, adjustments=adjustments,
                         global_pct=global_pct, sheet_label=sheet)
 
@@ -440,7 +433,6 @@ async def get_trends(token: str):
     if not _want_field(sess, "trends"):
         return {"enabled": False, "message": "Trends module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     await _capture_snapshot(db, token, sess, sheets)
     snaps = []
     cur = db.snapshots.find({"token": token}).sort("date", 1)
@@ -460,7 +452,6 @@ async def post_snapshot(token: str):
     from server import db
     sess = await _get_by_token(db, token)
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     await _capture_snapshot(db, token, sess, sheets)
     return {"ok": True, "date": datetime.now(timezone.utc).date().isoformat()}
 
@@ -517,7 +508,6 @@ async def test_alerts(token: str):
     from alerts import aggregate_metrics
     sess = await _get_by_token(db, token)
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     cur = aggregate_metrics(snapshot_metrics(sheets))
     prev = None
     snaps = []
@@ -539,7 +529,6 @@ async def create_concern(token: str, payload: ConcernCreate):
     if not _want_field(sess, "concerns"):
         return {"enabled": False, "message": "Concerns module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     try:
         people, departments = extract_people(sheets)
         await upsert_people_and_departments(db, people, departments, token)
@@ -678,7 +667,6 @@ async def get_column_map(token: str):
     if not _want_field(sess, "concerns"):
         return {"enabled": False, "message": "Column-map module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     out: Dict[str, Any] = {}
     for s in sheets:
         rows = s.get("rows_raw") or []
@@ -743,7 +731,6 @@ async def get_harmonize(token: str):
     if not _want_field(sess, "harmonize"):
         return {"enabled": False, "message": "Harmonize module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     if len(sheets) < 2:
         return {"enabled": True, "generated_by": "computed", "suggestions": [],
                 "message": "Harmonize needs 2+ connected sheets."}
@@ -1067,7 +1054,6 @@ async def copilot(token: str, payload: CopilotRequest, sheet: Optional[str] = No
     if not _want_field(sess, "copilot"):
         return {"enabled": False, "answer": "The Copilot module is not enabled for this export."}
     all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    all_sheets = await _clean_sheets(db, token, all_sheets)
 
     if payload.sheets:
         if not _want_field(sess, "multi_copilot"):
@@ -1144,7 +1130,6 @@ async def get_raw_head(token: str, sheet: str = "", rows: int = 10):
     from server import db
     sess = await _get_by_token(db, token)
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
-    sheets = await _clean_sheets(db, token, sheets)
     if sheet:
         target = next((s for s in sheets if s["label"] == sheet), None)
     else:
