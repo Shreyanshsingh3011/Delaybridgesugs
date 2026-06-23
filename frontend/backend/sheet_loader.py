@@ -1,5 +1,3 @@
-$ cat /home/user/Delaybridgesugs/frontend/backend/sheet_loader.py
-
 """Shared sheet loader and type-KPI evaluator.
 
 Imports ONLY from stdlib and local helpers (header_detector, sheet_cleaner, supadb).
