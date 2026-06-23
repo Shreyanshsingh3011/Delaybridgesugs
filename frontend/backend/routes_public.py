@@ -277,8 +277,8 @@ async def get_quality(token: str):
     from server import db
     from insights import build_data_quality
     sess = await _get_by_token(db, token)
-      if not _want_field(sess, "data_quality"):
-        return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
+        if not _want_field(sess, "data_quality"):
+            return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     return {"enabled": True, "project": sess.get("name"), **build_data_quality(sheets)}
 
@@ -291,7 +291,7 @@ async def get_pivot(token: str, dimension: Optional[str] = None, measure: Option
     from server import db
     from insights import build_pivot
     sess = await _get_by_token(db, token)
-       if not _want_field(sess, "pivot"):
+    if not _want_field(sess, "pivot"):
         return {"enabled": False, "message": "Pivot module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     return build_pivot(sheets, dimension=dimension, measure=measure, agg=agg,
@@ -307,7 +307,7 @@ async def get_forecast(token: str, periods: int = 6, date: Optional[str] = None,
     from server import db
     from forecast import build_forecast
     sess = await _get_by_token(db, token)
-       if not _want_field(sess, "forecast"):
+    if not _want_field(sess, "forecast"):
         return {"enabled": False, "message": "Forecast module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     return build_forecast(sheets, periods=max(1, min(36, periods)), date_col=date,
@@ -321,7 +321,7 @@ async def get_anomalies(token: str, column: Optional[str] = None, sensitivity: s
     from server import db
     from insights import build_anomalies
     sess = await _get_by_token(db, token)
-       if not _want_field(sess, "anomalies"):
+    if not _want_field(sess, "anomalies"):
         return {"enabled": False, "message": "Anomaly module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     return build_anomalies(sheets, column=column, sensitivity=sensitivity, sheet_label=sheet)
@@ -334,7 +334,7 @@ async def get_digest(token: str):
     from server import db
     from insights import build_digest
     sess = await _get_by_token(db, token)
-        if not _want_field(sess, "digest"):
+    if not _want_field(sess, "digest"):
         return {"enabled": False, "message": "Digest module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     digest = build_digest(sheets)
@@ -362,7 +362,7 @@ async def get_recommendations(token: str):
     from server import db
     from insights import build_recommendations
     sess = await _get_by_token(db, token)
-        if not _want_field(sess, "recommendations"):
+    if not _want_field(sess, "recommendations"):
         return {"enabled": False, "message": "Recommendations module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     return {"enabled": True, "project": sess.get("name"), **build_recommendations(sheets)}
@@ -376,7 +376,7 @@ async def get_whatif(token: str, dimension: Optional[str] = None, measure: Optio
     from server import db
     from insights import build_whatif
     sess = await _get_by_token(db, token)
-       if not _want_field(sess, "whatif"):
+    if not _want_field(sess, "whatif"):
         return {"enabled": False, "message": "What-if module is not enabled for this export."}
     adjustments = {}
     if adjust:
@@ -412,7 +412,7 @@ async def get_trends(token: str):
     from server import db
     from snapshots import compute_trends
     sess = await _get_by_token(db, token)
-       if not _want_field(sess, "trends"):
+    if not _want_field(sess, "trends"):
         return {"enabled": False, "message": "Trends module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     await _capture_snapshot(db, token, sess, sheets)
@@ -1037,8 +1037,8 @@ async def copilot(token: str, payload: CopilotRequest, sheet: Optional[str] = No
         return {"enabled": False, "answer": "The Copilot module is not enabled for this export."}
     all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
 
-    if payload.sheets:
-        if not _want_field(sess, "multi_copilot"):
+           if payload.sheets:
+              if not _want_field(sess, "multi_copilot"):
             return {"enabled": False, "answer": "Multi-sheet copilot is not enabled for this export."}
         sheets = [s for s in all_sheets if s.get("label") in payload.sheets] or all_sheets
     elif sheet:
