@@ -1037,8 +1037,8 @@ async def copilot(token: str, payload: CopilotRequest, sheet: Optional[str] = No
         return {"enabled": False, "answer": "The Copilot module is not enabled for this export."}
     all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
 
-           if payload.sheets:
-              if not _want_field(sess, "multi_copilot"):
+    if payload.sheets:
+        if not _want_field(sess, "multi_copilot"):
             return {"enabled": False, "answer": "Multi-sheet copilot is not enabled for this export."}
         sheets = [s for s in all_sheets if s.get("label") in payload.sheets] or all_sheets
     elif sheet:
