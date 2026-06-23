@@ -1,4 +1,3 @@
-
 """Public routes — accessed by public token (e.g. for Lovable dashboard, Apps Script).
 No JWT required. Read mostly; some mutating endpoints (ack/resolve, chat, refresh)."""
 import os
@@ -27,7 +26,7 @@ from chatbot import (
 from sheet_fetcher import fetch_apps_script
 from normalizer import normalize_rows
 from routes_admin import _run_and_persist_analysis
-from header_detector import resolve_headers
+from header_detector import resolve_headers, detect_header_row
 from sheet_cleaner import clean_sheet
 
 
@@ -49,18 +48,22 @@ async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Di
             s = dict(s)
             rows_raw = s.get("rows_raw") or []
             hm = hm_by_label.get(s.get("label", ""))
-            protected = set((hm or {}).get("column_overrides", {}).values())
+            protected = set((hm or {}).get("column_overrides", {}).values()) if hm else set()
             headers, resolved_rows = resolve_headers(rows_raw, hm)
             headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
             s["rows_raw"] = resolved_rows
             s["headers"] = headers
             s["columns"] = len(headers)
             s["pruned_empty_columns"] = n_pruned
+            if hm and hm.get("sheet_type"):
+                s["sheet_type"] = hm["sheet_type"]
         except Exception as e:
             logger.warning("_clean_sheets: sheet %r cleaning failed, using raw: %s", orig.get("label"), e)
             s = orig
         cleaned.append(s)
     return cleaned
+
+
 APPS_SCRIPT_SAMPLE = """function doGet(e) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const data = sheet.getDataRange().getValues();
@@ -100,6 +103,19 @@ def _strip_for_public(analysis: Dict[str, Any]) -> Dict[str, Any]:
     a = dict(analysis)
     a.pop("primary_rows", None)
     return a
+
+
+# ── Sheet types (no token required) ─────────────────────────────────────────
+@router.get("/sheet-types")
+async def get_sheet_types():
+    """Return all rows from dbridge_sheet_types for the type dropdown."""
+    from server import db
+    try:
+        types = await db.raw_select("dbridge_sheet_types")
+        return {"types": types or []}
+    except Exception as e:
+        logger.warning("get_sheet_types: %s", e)
+        return {"types": []}
 
 
 # -------- Full analysis JSON --------
@@ -1095,10 +1111,12 @@ async def get_alerts(token: str, limit: int = 100):
         items.append(it)
     return {"count": len(items), "alerts": items}
 
+
 # ── Header detection support ──────────────────────────────────────────────────
 
 @router.get("/{token}/raw-head")
 async def get_raw_head(token: str, sheet: str = "", rows: int = 10):
+    """Return first N raw rows of a sheet as arrays plus header/type suggestions."""
     from server import db
     sess = await _get_by_token(db, token)
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
@@ -1108,24 +1126,75 @@ async def get_raw_head(token: str, sheet: str = "", rows: int = 10):
         target = sheets[0] if sheets else None
     if not target:
         raise HTTPException(status_code=404, detail="Sheet not found.")
-    rows_raw = (target.get("rows_raw") or [])[:max(1, min(rows, 50))]
+    scan_n = max(1, min(rows, 50))
+    rows_raw = (target.get("rows_raw") or [])[:scan_n]
     if not rows_raw:
-        return {"sheet": sheet or target["label"], "raw_rows": [], "keys": []}
+        return {"sheet": sheet or target["label"], "raw_rows": [], "keys": [],
+                "suggested_header_row": 0, "suggested_type": None, "type_scores": {}}
     keys = list(rows_raw[0].keys())
     raw_rows = [[r.get(k) for k in keys] for r in rows_raw]
-    return {"sheet": target["label"], "keys": keys, "raw_rows": raw_rows}
+
+    # Suggest header row using auto-detection scoring
+    best_idx, best_score = detect_header_row(rows_raw, max_scan=min(12, len(rows_raw)))
+    suggested_header_row = best_idx if best_score >= 0.35 else 0
+
+    # Suggest sheet type by matching resolved column names vs signature_columns
+    suggested_type = None
+    type_scores: Dict[str, float] = {}
+    try:
+        sheet_types = await db.raw_select("dbridge_sheet_types") or []
+        if sheet_types:
+            # Resolve headers using the suggested row to get meaningful column names
+            from header_detector import resolve_headers as _rh
+            pseudo_hm = {"header_row_index": suggested_header_row}
+            resolved_headers, _ = _rh(rows_raw, pseudo_hm)
+            lower_headers = {h.lower() for h in resolved_headers}
+            for st in sheet_types:
+                sigs = st.get("signature_columns") or []
+                if not sigs:
+                    continue
+                matches = sum(
+                    1 for sig in sigs
+                    if any(sig.lower() in h for h in lower_headers)
+                )
+                type_scores[st["label"]] = round(matches / len(sigs), 3)
+            if type_scores:
+                best_type = max(type_scores, key=type_scores.__getitem__)
+                if type_scores[best_type] >= (3 / max(
+                    len(st.get("signature_columns") or [1])
+                    for st in sheet_types if st["label"] == best_type
+                )):
+                    suggested_type = best_type
+    except Exception as e:
+        logger.warning("get_raw_head: type scoring failed: %s", e)
+
+    return {
+        "sheet": target["label"],
+        "keys": keys,
+        "raw_rows": raw_rows,
+        "suggested_header_row": suggested_header_row,
+        "suggested_type": suggested_type,
+        "type_scores": type_scores,
+    }
 
 
 class HeaderMappingCreate(BaseModel):
     sheet_label: str
+    # MODE A: pick a row as the header
     header_row_index: Optional[int] = None
+    # MODE B: name columns by position
+    by_index: bool = False
     column_overrides: Optional[Dict[str, Any]] = None
+    # Shared options
+    sheet_type: Optional[str] = None
+    drop_empty_named: bool = False
+    keep_only_mapped: bool = False
 
 
 @router.post("/{token}/header-mapping")
 async def upsert_header_mapping(token: str, payload: HeaderMappingCreate):
+    """Save (or update) a header-row mapping for a sheet."""
     from server import db
-    from datetime import datetime, timezone
     await _get_by_token(db, token)
     record_id = f"{token}__{payload.sheet_label}"
     record = {
@@ -1133,7 +1202,11 @@ async def upsert_header_mapping(token: str, payload: HeaderMappingCreate):
         "token": token,
         "sheet_label": payload.sheet_label,
         "header_row_index": payload.header_row_index,
+        "by_index": payload.by_index,
         "column_overrides": payload.column_overrides or {},
+        "sheet_type": payload.sheet_type,
+        "drop_empty_named": payload.drop_empty_named,
+        "keep_only_mapped": payload.keep_only_mapped,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.raw_upsert("dbridge_header_mappings", record)
