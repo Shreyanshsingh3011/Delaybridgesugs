@@ -294,7 +294,7 @@ async def get_quality(token: str):
     subtotal/total rows, numeric type mismatches, and a score. Enabled via 'data_quality'."""
     from server import db
     from insights import build_data_quality
-       sess = await _get_by_token(db, token)
+    sess = await _get_by_token(db, token)
     if not _want_field(sess, "data_quality"):
         return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
@@ -1066,7 +1066,7 @@ async def copilot(token: str, payload: CopilotRequest, sheet: Optional[str] = No
     sess = await _get_by_token(db, token)
     if not _want_field(sess, "copilot"):
         return {"enabled": False, "answer": "The Copilot module is not enabled for this export."}
-   all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     all_sheets = await _clean_sheets(db, token, all_sheets)
 
     if payload.sheets:
