@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { api, formatErr } from "../api";
+import { api, PUBLIC_BASE, formatErr } from "../api";
 import { safeCopy } from "../lib/clipboard";
+import axios from "axios";
 import {
   RefreshCw, Plus, Trash2, Copy, ChevronRight, Check, X,
-  HelpCircle, Database, ChevronDown, Loader2,
+  HelpCircle, Database, ChevronDown, Loader2, Table2,
 } from "lucide-react";
 
 const APPS_SCRIPT_CODE = `function doGet(e) {
@@ -26,9 +27,12 @@ const LABEL_ORDER = ["A", "B", "C", "D", "E"];
 
 export default function SheetsPanel({ sessionMeta, reload, onNext }) {
   const sessionId = sessionMeta.id;
+  const publicToken = sessionMeta.public_token;
   const sheets = sessionMeta.sheets || [];
   const sheetsByLabel = Object.fromEntries(sheets.map((s) => [s.label, s]));
   const [showGuide, setShowGuide] = useState(false);
+  // { label, sheetType } when a sheet was just connected and awaits header config
+  const [pendingConfig, setPendingConfig] = useState(null);
 
   // Track which empty slots are revealed (visible as an input card).
   // Sheet A is always visible. B-E become visible when user clicks "+ Add Sheet X"
@@ -74,8 +78,10 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
     }
   };
 
-  const connectSheet = async (label, url) => {
-    return api.post(`/sessions/${sessionId}/sheets`, { url: url.trim() });
+  const connectSheet = async (label, url, sheetType) => {
+    await api.post(`/sessions/${sessionId}/sheets`, { url: url.trim() });
+    await reload();
+    setPendingConfig({ label, sheetType: sheetType || null });
   };
 
   const copyCode = async () => {
@@ -124,6 +130,21 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
       <div className="space-y-4">
         {LABEL_ORDER.map((L, i) => {
           const sheet = sheetsByLabel[L];
+          if (pendingConfig && pendingConfig.label === L && sheet) {
+            return (
+              <HeaderPickerCard
+                key={L}
+                sheet={sheet}
+                token={publicToken}
+                initialType={pendingConfig.sheetType}
+                onSave={async () => {
+                  setPendingConfig(null);
+                  await reload();
+                }}
+                onSkip={() => setPendingConfig(null)}
+              />
+            );
+          }
           if (sheet) {
             return (
               <ConnectedSheetCard
@@ -140,10 +161,7 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
                 key={L}
                 label={L}
                 primary={L === "A"}
-                onConnect={async (url) => {
-                  await connectSheet(L, url);
-                  await reload();
-                }}
+                onConnect={(url, sheetType) => connectSheet(L, url, sheetType)}
                 onCancel={L === "A" ? null : () => {
                   const next = new Set(revealed);
                   next.delete(L);
@@ -228,6 +246,15 @@ export default function SheetsPanel({ sessionMeta, reload, onNext }) {
 function SlotInputCard({ label, primary, onConnect, onCancel }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sheetType, setSheetType] = useState("");
+  const [sheetTypes, setSheetTypes] = useState([]);
+
+  useEffect(() => {
+    axios.get(`${PUBLIC_BASE}/sheet-types`)
+      .then((r) => setSheetTypes(r.data.types || []))
+      .catch(() => {});
+  }, []);
+
   const submit = async () => {
     if (!url.trim()) {
       toast.error("Paste an Apps Script Web App URL first.");
@@ -235,9 +262,8 @@ function SlotInputCard({ label, primary, onConnect, onCancel }) {
     }
     setBusy(true);
     try {
-      await onConnect(url);
+      await onConnect(url, sheetType || null);
       setUrl("");
-      toast.success(`Sheet ${label} connected`);
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || e.message);
     } finally { setBusy(false); }
@@ -271,10 +297,204 @@ function SlotInputCard({ label, primary, onConnect, onCancel }) {
           onKeyDown={(e) => e.key === "Enter" && submit()}
           disabled={busy}
         />
+        {sheetTypes.length > 0 && (
+          <select
+            data-testid={`type-select-${label}`}
+            className="db-input"
+            value={sheetType}
+            onChange={(e) => setSheetType(e.target.value)}
+            disabled={busy}
+            style={{ minWidth: 140 }}
+          >
+            <option value="">Generic</option>
+            {sheetTypes.map((t) => (
+              <option key={t.id} value={t.label}>{t.label}</option>
+            ))}
+          </select>
+        )}
         <button data-testid={`connect-${label}-button`} onClick={submit}
                 disabled={busy || !url.trim()} className="db-btn">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
           {busy ? "Connecting…" : "Connect"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+function HeaderPickerCard({ sheet, token, initialType, onSave, onSkip }) {
+  const [rawData, setRawData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedRow, setSelectedRow] = useState(null);
+  const [dropEmpty, setDropEmpty] = useState(false);
+  const [sheetType, setSheetType] = useState(initialType || "");
+  const [sheetTypes, setSheetTypes] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      axios.get(`${PUBLIC_BASE}/${token}/raw-head?sheet=${sheet.label}&rows=12`),
+      axios.get(`${PUBLIC_BASE}/sheet-types`),
+    ]).then(([rawRes, typesRes]) => {
+      const d = rawRes.data;
+      setRawData(d);
+      setSelectedRow(d.suggested_header_row ?? 0);
+      if (!initialType && d.suggested_type) setSheetType(d.suggested_type);
+      setSheetTypes(typesRes.data.types || []);
+    }).catch(() => {
+      toast.error("Could not load raw sheet data.");
+    }).finally(() => setLoading(false));
+  }, [token, sheet.label]);
+
+  const previewHeaders = () => {
+    if (!rawData || selectedRow == null) return [];
+    const row = rawData.raw_rows[selectedRow] || [];
+    return row.map((v, i) => {
+      const s = String(v ?? "").trim();
+      if (!s) return dropEmpty ? null : `Column ${i + 1}`;
+      return s;
+    }).filter(Boolean);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await axios.post(`${PUBLIC_BASE}/${token}/header-mapping`, {
+        sheet_label: sheet.label,
+        header_row_index: selectedRow,
+        drop_empty_named: dropEmpty,
+        sheet_type: sheetType || null,
+      });
+      toast.success(`Header row saved for Sheet ${sheet.label}`);
+      await onSave();
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || e.message);
+    } finally { setSaving(false); }
+  };
+
+  if (loading) {
+    return (
+      <div className="db-card p-5 fade-in" data-testid={`header-picker-${sheet.label}`}>
+        <div className="flex items-center gap-3">
+          <span className={`db-chip db-chip-${COLOR_MAP[sheet.label]}`}>Sheet {sheet.label}</span>
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm" style={{ color: "var(--db-muted)" }}>Loading raw data…</span>
+        </div>
+      </div>
+    );
+  }
+
+  const headers = previewHeaders();
+
+  return (
+    <div className="db-card p-5 fade-in" data-testid={`header-picker-${sheet.label}`}>
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <span className={`db-chip db-chip-${COLOR_MAP[sheet.label]}`}>Sheet {sheet.label}</span>
+        <Table2 className="w-4 h-4 db-accent" />
+        <span className="text-sm font-semibold">Pick header row</span>
+        <span className="text-[11px] mono" style={{ color: "var(--db-muted)" }}>
+          click the row that contains column names
+        </span>
+        <div className="flex-1" />
+        <button onClick={onSkip} className="db-btn db-btn-ghost py-1 px-2 text-xs">
+          <X className="w-3.5 h-3.5" /> Skip
+        </button>
+      </div>
+
+      {/* Type selector */}
+      {sheetTypes.length > 0 && (
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-[11px] mono uppercase tracking-wider" style={{ color: "var(--db-muted)" }}>Sheet type</span>
+          <select
+            className="db-input"
+            value={sheetType}
+            onChange={(e) => setSheetType(e.target.value)}
+            style={{ minWidth: 160 }}
+          >
+            <option value="">Generic</option>
+            {sheetTypes.map((t) => (
+              <option key={t.id} value={t.label}>{t.label}</option>
+            ))}
+          </select>
+          {rawData?.suggested_type && (
+            <span className="text-[11px] mono db-accent">suggested: {rawData.suggested_type}</span>
+          )}
+        </div>
+      )}
+
+      {/* Raw grid */}
+      {rawData && rawData.raw_rows.length > 0 ? (
+        <div className="overflow-x-auto mb-4">
+          <table className="text-[11px] mono w-full">
+            <tbody>
+              {rawData.raw_rows.map((row, ri) => (
+                <tr
+                  key={ri}
+                  onClick={() => setSelectedRow(ri)}
+                  className={`cursor-pointer border-t db-divider transition-colors ${
+                    selectedRow === ri
+                      ? "bg-[var(--db-accent)]/10 outline outline-1 outline-[var(--db-accent)]"
+                      : "hover:bg-white/[0.03]"
+                  }`}
+                >
+                  <td className="py-1 pr-2 w-6 text-right" style={{ color: "var(--db-muted)" }}>
+                    {selectedRow === ri
+                      ? <Check className="w-3 h-3 db-accent inline" />
+                      : <span>{ri}</span>}
+                  </td>
+                  {row.slice(0, 8).map((cell, ci) => (
+                    <td key={ci} className="py-1 pr-3 truncate max-w-[160px]">
+                      {String(cell ?? "").slice(0, 40) || <span style={{ color: "var(--db-muted)" }}>—</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="text-sm mb-4" style={{ color: "var(--db-muted)" }}>No rows available.</div>
+      )}
+
+      {/* Preview headers */}
+      {headers.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[11px] mono uppercase tracking-wider mb-2" style={{ color: "var(--db-muted)" }}>
+            column names preview
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {headers.slice(0, 12).map((h, i) => (
+              <span key={i} className="db-chip db-chip-grey">{h}</span>
+            ))}
+            {headers.length > 12 && (
+              <span className="db-chip db-chip-grey">+{headers.length - 12} more</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Options */}
+      <div className="flex items-center gap-4 mb-4">
+        <label className="flex items-center gap-2 cursor-pointer text-xs">
+          <input
+            type="checkbox"
+            checked={dropEmpty}
+            onChange={(e) => setDropEmpty(e.target.checked)}
+            className="rounded"
+          />
+          <span style={{ color: "var(--db-muted)" }}>Drop columns with blank header</span>
+        </label>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-3">
+        <button onClick={handleSave} disabled={saving || selectedRow == null} className="db-btn">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+          {saving ? "Saving…" : "Save header mapping"}
+        </button>
+        <button onClick={onSkip} className="db-btn db-btn-ghost">
+          Use default
         </button>
       </div>
     </div>

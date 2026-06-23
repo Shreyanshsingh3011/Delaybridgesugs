@@ -47,6 +47,7 @@ def _score_as_header(values: List[Any], data_rows_below: List[List[Any]]) -> flo
         return 0.0
 
     fill_ratio = len(non_empty) / n
+    # Excel date serials count as numeric for header scoring purposes
     text_ratio = sum(1 for v in non_empty if not _is_numeric(v)) / len(non_empty)
     unique_ratio = len({str(v).strip().lower() for v in non_empty}) / len(non_empty)
 
@@ -62,7 +63,7 @@ def _score_as_header(values: List[Any], data_rows_below: List[List[Any]]) -> flo
         if flat_data:
             data_numeric = sum(1 for v in flat_data if _is_numeric(v)) / len(flat_data)
             row_numeric = sum(1 for v in non_empty if _is_numeric(v)) / len(non_empty)
-            data_bonus = max(0.0, data_numeric - row_numeric) * 1.5
+            data_bonus = max(0.0, data_numeric - row_numeric) * 1.5  # amplify this signal
 
     # Extra bonus for short, readable, unique text values (hallmarks of real headers)
     readability_bonus = 0.0
@@ -91,6 +92,24 @@ def _remap_rows(
     return result
 
 
+def detect_header_row(rows_raw: List[Dict[str, Any]], max_scan: int = 12) -> Tuple[int, float]:
+    """Return (best_row_index, best_score) by scoring rows as header candidates.
+    Returns (0, 0.0) if rows_raw is empty."""
+    if not rows_raw:
+        return 0, 0.0
+    candidates = rows_raw[:max_scan]
+    best_score = -1.0
+    best_idx = 0
+    for i, row in enumerate(candidates):
+        values = list(row.values())
+        below = [list(r.values()) for r in candidates[i + 1: i + 6]]
+        score = _score_as_header(values, below)
+        if score > best_score:
+            best_score = score
+            best_idx = i
+    return best_idx, best_score
+
+
 def resolve_headers(
     rows_raw: List[Dict[str, Any]],
     header_mapping: Optional[Dict[str, Any]] = None,
@@ -100,8 +119,12 @@ def resolve_headers(
     (resolved_headers, resolved_data_rows).
 
     header_mapping (from dbridge_header_mappings) may contain:
-      - header_row_index: int  → use that exact row as headers (authoritative)
-      - column_overrides: dict → rename {detected_name: real_name}
+      - header_row_index: int  → use that exact row as headers (MODE A)
+      - by_index: bool         → name columns by position (MODE B)
+      - column_overrides: dict → rename {detected_name: real_name} (MODE A) or
+                                 {"<pos_index>": "<name>"} (MODE B)
+      - drop_empty_named: bool → drop columns where header cell was blank (MODE A)
+      - keep_only_mapped: bool → drop unmapped columns (MODE B)
     """
     if not rows_raw:
         return [], []
@@ -110,22 +133,53 @@ def resolve_headers(
 
     # ── USER OVERRIDE ──────────────────────────────────────────────────────
     if header_mapping:
-        hri = header_mapping.get("header_row_index")
         overrides: Dict[str, str] = header_mapping.get("column_overrides") or {}
+
+        # MODE B: position-based column naming
+        if header_mapping.get("by_index"):
+            keep_only = header_mapping.get("keep_only_mapped", False)
+            kept_old: List[str] = []
+            new_names: List[str] = []
+            for i, k in enumerate(existing_keys):
+                name = overrides.get(str(i)) or overrides.get(k)
+                if name:
+                    kept_old.append(k)
+                    new_names.append(name)
+                elif not keep_only:
+                    kept_old.append(k)
+                    new_names.append(f"Column {i + 1}")
+            filtered = [{k: r.get(k) for k in kept_old} for r in rows_raw]
+            return new_names, _remap_rows(filtered, kept_old, new_names)
+
+        # MODE A: header_row_index
+        hri = header_mapping.get("header_row_index")
+        drop_empty = header_mapping.get("drop_empty_named", False)
 
         if hri is not None and isinstance(hri, int) and 0 <= hri < len(rows_raw):
             raw_header_vals = list(rows_raw[hri].values())
-            raw_headers = [
-                str(v).strip() if str(v).strip() else f"Column {i + 1}"
-                for i, v in enumerate(raw_header_vals)
-            ]
             data_rows = rows_raw[hri + 1:]
         else:
-            raw_headers = existing_keys
+            raw_header_vals = existing_keys
             data_rows = rows_raw
 
+        # Build (index, raw_name) pairs, respecting drop_empty_named
+        kept_pairs: List[Tuple[int, str]] = []
+        for i, v in enumerate(raw_header_vals):
+            cell = str(v).strip()
+            raw_name = cell if cell else f"Column {i + 1}"
+            is_empty_generated = not cell
+            if drop_empty and is_empty_generated and not overrides.get(raw_name):
+                continue
+            kept_pairs.append((i, raw_name))
+
+        kept_indices = [p[0] for p in kept_pairs]
+        raw_headers = [p[1] for p in kept_pairs]
         headers = [overrides.get(h, h) for h in raw_headers]
-        resolved = _remap_rows(data_rows, existing_keys, headers)
+
+        # Filter rows to kept columns then remap
+        old_keys_kept = [existing_keys[i] for i in kept_indices if i < len(existing_keys)]
+        filtered = [{k: r.get(k) for k in old_keys_kept} for r in data_rows]
+        resolved = _remap_rows(filtered, old_keys_kept, headers)
         return headers, resolved
 
     # ── AUTO-DETECTION ─────────────────────────────────────────────────────
