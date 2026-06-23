@@ -212,7 +212,7 @@ async def get_dashboard(token: str):
     def want(f):
         return (not fields) or (f in fields)
 
-    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+   sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     sheets = await _clean_sheets(db, token, sheets)
     out = {"enabled": True, "project": sess.get("name"), "enabled_fields": fields}
 
@@ -1053,7 +1053,8 @@ async def copilot(token: str, payload: CopilotRequest, sheet: Optional[str] = No
     sess = await _get_by_token(db, token)
     if not _want_field(sess, "copilot"):
         return {"enabled": False, "answer": "The Copilot module is not enabled for this export."}
-    all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+   all_sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    all_sheets = await _clean_sheets(db, token, all_sheets)
 
     if payload.sheets:
         if not _want_field(sess, "multi_copilot"):
