@@ -131,15 +131,38 @@ def _resolve_columns(headers: List[str], match_columns: Dict[str, List[str]]) ->
     return resolved
 
 
+def _resolve_col_ref(col_ref: Optional[str], col_map: Dict[str, str]) -> Optional[str]:
+    """Look up a column reference like '@status' or 'status' in col_map.
+    Tries: exact key, key without leading '@', lowercased variants."""
+    if not col_ref:
+        return None
+    # exact
+    if col_ref in col_map:
+        return col_map[col_ref]
+    # strip @ prefix
+    stripped = col_ref.lstrip("@")
+    if stripped in col_map:
+        return col_map[stripped]
+    # lowercase
+    col_ref_l = col_ref.lower().lstrip("@")
+    for k, v in col_map.items():
+        if k.lower().lstrip("@") == col_ref_l:
+            return v
+    # not a logical key — treat as literal column name
+    return col_ref
+
+
 def _eval_kpi(kpi: Dict[str, Any], rows: List[Dict[str, Any]],
               col_map: Dict[str, str], headers: List[str]) -> Optional[Any]:
     """Evaluate one KPI definition. Returns the value or None if it can't be computed."""
     agg = kpi.get("aggregation", "")
-    col_ref = kpi.get("column")  # e.g. "@status" or a literal column name
-    col = col_map.get(col_ref, col_ref) if col_ref else None
+    col_ref = kpi.get("column")
+    col = _resolve_col_ref(col_ref, col_map) if col_ref else None
 
-    # Verify required column exists
-    if col and col not in headers:
+    # Skip only if a column was referenced but couldn't be resolved to a real header
+    if col_ref and col and col not in headers:
+        return None
+    if col_ref and not col:
         return None
 
     today = date.today()
@@ -154,7 +177,7 @@ def _eval_kpi(kpi: Dict[str, Any], rows: List[Dict[str, Any]],
                 return None
             return sum(1 for r in rows
                        if not _is_skip_row(r, headers)
-                       and str(r.get(col, "")).lower() in values)
+                       and str(r.get(col, "")).strip().lower() in values)
 
         elif agg == "count_where_numeric":
             op = kpi.get("op", "==")
@@ -205,8 +228,8 @@ def _eval_kpi(kpi: Dict[str, Any], rows: List[Dict[str, Any]],
             date_col_ref = kpi.get("date_column")
             status_col_ref = kpi.get("status_column")
             done_values = [str(v).lower() for v in (kpi.get("done_values") or [])]
-            date_col = col_map.get(date_col_ref, date_col_ref) if date_col_ref else None
-            status_col = col_map.get(status_col_ref, status_col_ref) if status_col_ref else None
+            date_col = _resolve_col_ref(date_col_ref, col_map) if date_col_ref else None
+            status_col = _resolve_col_ref(status_col_ref, col_map) if status_col_ref else None
             if not date_col or date_col not in headers:
                 return None
             count = 0
@@ -238,42 +261,4 @@ async def compute_type_kpis(
     Falls back to empty on any error.
     """
     empty = {"type_kpis": [], "matched_columns": {}, "skipped_kpis": []}
-    try:
-        sheet_type = sheet.get("sheet_type")
-        if not sheet_type:
-            return empty
-
-        # Load analysis_rules from dbridge_sheet_types
-        rules = None
-        try:
-            type_rows = await db.raw_select("dbridge_sheet_types", {"id": sheet_type})
-            if type_rows:
-                rules = type_rows[0].get("analysis_rules") or {}
-        except Exception as e:
-            logger.warning("compute_type_kpis: failed to load sheet type %r: %s", sheet_type, e)
-            return empty
-
-        if not rules:
-            return empty
-
-        rows = sheet.get("rows_raw") or []
-        headers = sheet.get("headers") or [k for k in (rows[0].keys() if rows else [])]
-        match_columns = rules.get("match_columns") or {}
-        kpi_defs = rules.get("kpis") or []
-
-        col_map = _resolve_columns(headers, match_columns)
-
-        type_kpis = []
-        skipped = []
-        for kpi in kpi_defs:
-            val = _eval_kpi(kpi, rows, col_map, headers)
-            if val is None:
-                skipped.append(kpi.get("label", "?"))
-            else:
-                type_kpis.append({"label": kpi.get("label", ""), "value": val})
-
-        return {"type_kpis": type_kpis, "matched_columns": col_map, "skipped_kpis": skipped}
-
-    except Exception as e:
-        logger.warning("compute_type_kpis: unexpected error: %s", e)
-        return empty
+    try
