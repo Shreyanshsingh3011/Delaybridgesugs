@@ -1,5 +1,3 @@
-$ cat /home/user/Delaybridgesugs/frontend/backend/header_detector.py
-
 """Smart header-row detection for Google Sheets ingestion.
 
 Given rows_raw (list of dicts keyed by whatever the Apps Script returned —
