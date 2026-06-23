@@ -277,8 +277,8 @@ async def get_quality(token: str):
     from server import db
     from insights import build_data_quality
     sess = await _get_by_token(db, token)
-        if not _want_field(sess, "data_quality"):
-            return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
+    if not _want_field(sess, "data_quality"):
+        return {"enabled": False, "message": "Data-quality module is not enabled for this export."}
     sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
     return {"enabled": True, "project": sess.get("name"), **build_data_quality(sheets)}
 
