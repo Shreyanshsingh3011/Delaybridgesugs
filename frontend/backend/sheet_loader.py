@@ -117,11 +117,9 @@ def _resolve_columns(headers: List[str], match_columns: Dict[str, List[str]]) ->
     for logical, aliases in match_columns.items():
         for alias in aliases:
             alias_l = alias.lower()
-            # exact match first
             if alias_l in headers_lower:
                 resolved[logical] = headers_lower[alias_l]
                 break
-            # substring match
             for hl, h in headers_lower.items():
                 if alias_l in hl:
                     resolved[logical] = h
@@ -136,19 +134,15 @@ def _resolve_col_ref(col_ref: Optional[str], col_map: Dict[str, str]) -> Optiona
     Tries: exact key, key without leading '@', lowercased variants."""
     if not col_ref:
         return None
-    # exact
     if col_ref in col_map:
         return col_map[col_ref]
-    # strip @ prefix
     stripped = col_ref.lstrip("@")
     if stripped in col_map:
         return col_map[stripped]
-    # lowercase
     col_ref_l = col_ref.lower().lstrip("@")
     for k, v in col_map.items():
         if k.lower().lstrip("@") == col_ref_l:
             return v
-    # not a logical key — treat as literal column name
     return col_ref
 
 
@@ -159,7 +153,6 @@ def _eval_kpi(kpi: Dict[str, Any], rows: List[Dict[str, Any]],
     col_ref = kpi.get("column")
     col = _resolve_col_ref(col_ref, col_map) if col_ref else None
 
-    # Skip only if a column was referenced but couldn't be resolved to a real header
     if col_ref and col and col not in headers:
         return None
     if col_ref and not col:
@@ -261,4 +254,41 @@ async def compute_type_kpis(
     Falls back to empty on any error.
     """
     empty = {"type_kpis": [], "matched_columns": {}, "skipped_kpis": []}
-    try
+    try:
+        sheet_type = sheet.get("sheet_type")
+        if not sheet_type:
+            return empty
+
+        rules = None
+        try:
+            type_rows = await db.raw_select("dbridge_sheet_types", {"id": sheet_type})
+            if type_rows:
+                rules = type_rows[0].get("analysis_rules") or {}
+        except Exception as e:
+            logger.warning("compute_type_kpis: failed to load sheet type %r: %s", sheet_type, e)
+            return empty
+
+        if not rules:
+            return empty
+
+        rows = sheet.get("rows_raw") or []
+        headers = sheet.get("headers") or [k for k in (rows[0].keys() if rows else [])]
+        match_columns = rules.get("match_columns") or {}
+        kpi_defs = rules.get("kpis") or []
+
+        col_map = _resolve_columns(headers, match_columns)
+
+        type_kpis = []
+        skipped = []
+        for kpi in kpi_defs:
+            val = _eval_kpi(kpi, rows, col_map, headers)
+            if val is None:
+                skipped.append(kpi.get("label", "?"))
+            else:
+                type_kpis.append({"label": kpi.get("label", ""), "value": val})
+
+        return {"type_kpis": type_kpis, "matched_columns": col_map, "skipped_kpis": skipped}
+
+    except Exception as e:
+        logger.warning("compute_type_kpis: unexpected error: %s", e)
+        return empty
