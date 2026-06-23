@@ -86,9 +86,27 @@ async def _get_by_token(db, token: str) -> Dict[str, Any]:
     return sess
 
 
+_FIELD_ALIASES: Dict[str, str] = {
+    "quality": "data_quality", "data_quality": "data_quality",
+    "variance": "variance", "variances": "variance",
+    "correlation": "correlation", "correlations": "correlation",
+    "recommendation": "recommendations", "recommendations": "recommendations",
+    "anomaly": "anomalies", "anomalies": "anomalies",
+    "forecast": "forecast",
+    "trend": "trends", "trends": "trends",
+    "pivot": "pivot", "whatif": "whatif", "what_if": "whatif",
+    "dependency": "dependencies", "dependencies": "dependencies",
+    "digest": "digest", "alerts": "alerts", "alert": "alerts",
+}
+
+
 def _want_field(sess: Dict[str, Any], key: str) -> bool:
     fields = sess.get("export_fields") or []
-    return (not fields) or (key in fields)
+    if not fields:
+        return True
+    canonical = _FIELD_ALIASES.get(key.lower(), key.lower())
+    aliases = {k for k, v in _FIELD_ALIASES.items() if v == canonical} | {canonical, key}
+    return bool(set(fields) & aliases)
 
 
 def _ensure_analysis(sess: Dict[str, Any]) -> Dict[str, Any]:
