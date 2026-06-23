@@ -78,6 +78,7 @@ export default function ConfigPanel({
       ? exportFields.filter((k) => k !== key)
       : [...exportFields, key];
     setExportFields(next);
+    onSaveFields(next);
   };
   const selectAll = () => { setExportFields(all); onSaveFields(all); };
   const clearAll = () => { setExportFields([]); onSaveFields([]); };
