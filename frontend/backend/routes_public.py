@@ -1255,10 +1255,22 @@ async def get_raw_head(token: str, sheet: str = "", rows: int = 10):
     try:
         sheet_types = await db.raw_select("dbridge_sheet_types") or []
         if sheet_types:
-            # Resolve headers using the suggested row to get meaningful column names
-            from header_detector import resolve_headers as _rh
-            pseudo_hm = {"header_row_index": suggested_header_row}
-            resolved_headers, _ = _rh(rows_raw, pseudo_hm)
+                     # Resolve the column names to score signatures against.
+            # If the sheet's dict keys are already real names (not positional
+            # column letters/indices), the keys ARE the headers — scoring off a
+            # detected data row would compare against cell values like "Total"
+            # and zero out every type. Only fall back to header-row resolution
+            # when the keys are positional.
+            from header_detector import (
+                resolve_headers as _rh,
+                _looks_like_positional_keys as _positional,
+            )
+            existing_keys = [str(k) for k in rows_raw[0].keys()] if rows_raw else []
+            if existing_keys and not _positional(existing_keys):
+                resolved_headers = existing_keys
+            else:
+                pseudo_hm = {"header_row_index": suggested_header_row}
+                resolved_headers, _ = _rh(rows_raw, pseudo_hm)
             lower_headers = {h.lower() for h in resolved_headers}
             for st in sheet_types:
                 sigs = st.get("signature_columns") or []
