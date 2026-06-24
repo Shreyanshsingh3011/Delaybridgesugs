@@ -254,48 +254,82 @@ async def compute_type_kpis(
     Falls back to empty on any error.
     """
     empty = {"type_kpis": [], "matched_columns": {}, "skipped_kpis": []}
+    debug: Dict[str, Any] = {"reached_compute": True}
     try:
         sheet_type = sheet.get("sheet_type")
+        debug["sheet_type"] = sheet_type
         if not sheet_type:
+            debug["exit"] = "no sheet_type"
+            empty["debug"] = debug
             return empty
 
         rules = None
         try:
             type_rows = await db.raw_select("dbridge_sheet_types", {"id": sheet_type})
+            debug["type_rows_count"] = len(type_rows) if type_rows else 0
             if type_rows:
                 rules = type_rows[0].get("analysis_rules") or {}
+                debug["rules_keys"] = list(rules.keys()) if rules else []
         except Exception as e:
+            debug["rules_fetch_error"] = f"{type(e).__name__}: {e}"
             logger.warning("compute_type_kpis: failed to load sheet type %r: %s", sheet_type, e)
+            empty["debug"] = debug
             return empty
 
         if not rules:
+            debug["exit"] = "rules empty"
+            empty["debug"] = debug
             return empty
 
         rows = sheet.get("rows_raw") or []
         raw_headers = sheet.get("headers") or list(rows[0].keys() if rows else [])
-        # Normalize: headers may be strings or dicts like {"name": "Status"}
         headers = [h["name"] if isinstance(h, dict) else str(h) for h in raw_headers]
         match_columns = rules.get("match_columns") or {}
         kpi_defs = rules.get("kpis") or []
 
         col_map = _resolve_columns(headers, match_columns)
 
+        debug["row_count"] = len(rows)
+        debug["headers"] = headers[:10]
+        debug["col_map"] = col_map
+        debug["kpi_count_input"] = len(kpi_defs)
+        debug["per_kpi"] = []
+
         type_kpis = []
         skipped = []
         for kpi in kpi_defs:
-            # Only skip if the KPI explicitly references @columns that can't resolve to a real header
             refs = [v for v in kpi.values() if isinstance(v, str) and v.startswith("@")]
-            if refs and not all(_resolve_col_ref(r, col_map) in headers for r in refs):
+            resolved_refs = [(r, _resolve_col_ref(r, col_map)) for r in refs]
+            would_skip = refs and not all(rv in headers for _, rv in resolved_refs)
+            kpi_debug = {
+                "label": kpi.get("label", "?"),
+                "agg": kpi.get("aggregation"),
+                "refs": refs,
+                "resolved": [{"ref": r, "resolved": rv, "in_headers": rv in headers} for r, rv in resolved_refs],
+                "would_skip_because": ("ref not in headers" if would_skip else None),
+            }
+            if would_skip:
                 skipped.append(kpi.get("label", "?"))
+                kpi_debug["outcome"] = "skipped_pre"
+                debug["per_kpi"].append(kpi_debug)
                 continue
-            val = _eval_kpi(kpi, rows, col_map, headers)
+            try:
+                val = _eval_kpi(kpi, rows, col_map, headers)
+            except Exception as e:
+                val = None
+                kpi_debug["eval_error"] = f"{type(e).__name__}: {e}"
             if val is None:
                 skipped.append(kpi.get("label", "?"))
+                kpi_debug["outcome"] = "skipped_eval_none"
             else:
                 type_kpis.append({"label": kpi.get("label", ""), "value": val})
+                kpi_debug["outcome"] = f"ok:{val}"
+            debug["per_kpi"].append(kpi_debug)
 
-        return {"type_kpis": type_kpis, "matched_columns": col_map, "skipped_kpis": skipped}
+        return {"type_kpis": type_kpis, "matched_columns": col_map, "skipped_kpis": skipped, "debug": debug}
 
     except Exception as e:
+        debug["outer_error"] = f"{type(e).__name__}: {e}"
         logger.warning("compute_type_kpis: unexpected error: %s", e)
+        empty["debug"] = debug
         return empty
