@@ -149,7 +149,7 @@ def _resolve_col_ref(col_ref: Optional[str], col_map: Dict[str, str]) -> Optiona
 def _eval_kpi(kpi: Dict[str, Any], rows: List[Dict[str, Any]],
               col_map: Dict[str, str], headers: List[str]) -> Optional[Any]:
     """Evaluate one KPI definition. Returns the value or None if it can't be computed."""
-    agg = kpi.get("aggregation", "")
+    agg = kpi.get("agg", "")
     col_ref = kpi.get("column")
     col = _resolve_col_ref(col_ref, col_map) if col_ref else None
 
