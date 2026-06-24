@@ -272,7 +272,9 @@ async def compute_type_kpis(
             return empty
 
         rows = sheet.get("rows_raw") or []
-        headers = sheet.get("headers") or [k for k in (rows[0].keys() if rows else [])]
+        raw_headers = sheet.get("headers") or list(rows[0].keys() if rows else [])
+        # Normalize: headers may be strings or dicts like {"name": "Status"}
+        headers = [h["name"] if isinstance(h, dict) else str(h) for h in raw_headers]
         match_columns = rules.get("match_columns") or {}
         kpi_defs = rules.get("kpis") or []
 
@@ -281,6 +283,11 @@ async def compute_type_kpis(
         type_kpis = []
         skipped = []
         for kpi in kpi_defs:
+            # Only skip if the KPI explicitly references @columns that can't resolve to a real header
+            refs = [v for v in kpi.values() if isinstance(v, str) and v.startswith("@")]
+            if refs and not all(_resolve_col_ref(r, col_map) in headers for r in refs):
+                skipped.append(kpi.get("label", "?"))
+                continue
             val = _eval_kpi(kpi, rows, col_map, headers)
             if val is None:
                 skipped.append(kpi.get("label", "?"))
