@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 # ── In-process caches ────────────────────────────────────────────────────────
 
-_HISTORY: Dict[str, List[Dict[str, str]]] = {}
-_MAX_HISTORY = 50
-
+_HISTORY: Dict[str, List[Dict[str, str]]] = {}   # session_id -> [{role,content}]
+_CTX_CACHE: Dict[str, Dict[str, Any]] = {}        # cache_key -> context dict
+_MAX_HISTORY = 50   # turns per session before eviction
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,6 +43,11 @@ def _numeric_summary(rows: List[Dict], col: str) -> Optional[Dict]:
     s = sum(vals)
     return {"count": n, "sum": round(s, 2), "avg": round(s / n, 2),
             "min": round(min(vals), 2), "max": round(max(vals), 2)}
+
+
+def _truncate_json(obj: Any, max_chars: int = 4000) -> str:
+    s = json.dumps(obj, default=str)
+    return s if len(s) <= max_chars else s[:max_chars] + "…[truncated]"
 
 
 # ── Context builder ───────────────────────────────────────────────────────────
@@ -72,7 +77,7 @@ def build_grounded_context(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
         for c in cols:
             lines.append(f"  {c['name']} [{c['type']}] — {c.get('distinct', '?')} distinct values")
 
-        # Numeric aggregates
+        # Numeric aggregates (exact, backend-computed)
         num_cols = [c for c in cols if c["type"] == "number"]
         if num_cols:
             lines.append("NUMERIC AGGREGATES (exact, computed from all data rows):")
@@ -84,7 +89,7 @@ def build_grounded_context(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
                         f"min={ns['min']}, max={ns['max']}, non_empty={ns['count']}"
                     )
 
-        # Category distributions
+        # Category distributions (top 20)
         cat_cols = [c for c in cols if c["type"] in ("category", "text")]
         if cat_cols:
             lines.append("CATEGORY DISTRIBUTIONS (top 20 per column, exact counts):")
@@ -96,14 +101,14 @@ def build_grounded_context(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
                 top = cnt.most_common(20)
                 lines.append(f"  {c['name']}: " + ", ".join(f"{k}={v}" for k, v in top))
 
-        # type_kpis
+        # type_kpis (already computed)
         type_kpis = s.get("type_kpis") or []
         if type_kpis:
             lines.append("TYPE KPIs (exact computed values):")
             for kpi in type_kpis:
                 lines.append(f"  {kpi['label']}: {kpi['value']}")
 
-        # data_quality
+        # data_quality module
         try:
             dq = _quality_for_sheet(s)
             lines.append(f"DATA QUALITY SCORE: {dq['score']}/100")
@@ -135,7 +140,7 @@ def build_grounded_context(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
             if highlights:
                 lines.append("DIGEST HIGHLIGHTS:")
                 for h in highlights[:6]:
-                    lines.append(f"  * {h}")
+                    lines.append(f"  • {h}")
         except Exception as e:
             logger.warning("copilot: digest failed for %r: %s", label, e)
 
@@ -175,9 +180,9 @@ def build_grounded_context(sheets: List[Dict[str, Any]]) -> Dict[str, Any]:
 def build_copilot_system_prompt(context_text: str, project_name: str) -> str:
     return f"""You are a grounded data copilot for "{project_name}".
 
-GROUNDING RULES — follow without exception:
+GROUNDING RULES — you must follow these without exception:
 1. Every number you state must come verbatim from the DATASET CONTEXT below. Never round, recompute, or estimate a number that is given exactly. Never invent a number.
-2. Every piece of advice must be tied to a specific signal in the DATASET CONTEXT (a quality issue, anomaly, recommendation, or distribution). Label suggestions clearly as "Suggestion:" so the user knows they are interpretive, not hard facts.
+2. Every piece of advice must be tied to a specific signal in the DATASET CONTEXT (a quality issue, anomaly, recommendation, or distribution). Label suggestions clearly as "Suggestion:" so the user knows they're interpretive, not hard facts.
 3. If a question cannot be answered from the data below, say so plainly and state what the data CAN address.
 4. Do not use any world knowledge about what numbers "should" be. Describe only what this dataset shows.
 5. At the end of answers, offer 1-3 concrete follow-up questions the copilot can actually answer from this data.
@@ -267,30 +272,48 @@ def answer_locally(question: str, sheets: List[Dict[str, Any]]) -> str:
     superlative = any(w in q for w in ["highest", "top", "most", "largest", "lowest", "least", "smallest", "maximum", "minimum"])
     low = any(w in q for w in ["lowest", "least", "smallest", "minimum"])
     grouping = ("which" in q) or (" by " in q) or ("per " in q) or ("each" in q)
-    sum_intent = any(w in q for w in ["total", "sum", "value", "amount"])
-    count_intent = any(w in q for w in ["common", "count", "how many", "frequency"])
+    sum_intent = any(w in q for w in ["total", "sum", "value", "amount", "items", "top items", "which items"])
+    count_intent = any(w in q for w in ["most common", "frequency", "how many times", "number of times", "how often"])
+    listing = any(w in q for w in ["list", "what are", "top items", "which items", "breakdown"])
 
-    if superlative and (grouping or (find_col(cats) and (find_col(numeric) or sum_intent))):
+    def _rank_by_measure(dim: str, measure: str, n: int = 10) -> str:
+        agg: Dict[str, float] = defaultdict(float)
+        for r in rows:
+            k = r.get(dim); m = _to_number(r.get(measure))
+            if k not in (None, "") and m is not None:
+                agg[str(k)] += m
+        if not agg:
+            return ""
+        ranked = sorted(agg.items(), key=lambda x: x[1], reverse=not low)[:n]
+        label = "lowest" if low else "highest"
+        lines = [f"Top {len(ranked)} {dim} by total {measure} ({label} first):"]
+        lines += [f"  {i+1}. {k} — {_fmt(v)}" for i, (k, v) in enumerate(ranked)]
+        return "\n".join(lines)
+
+    if (superlative or listing) and not count_intent:
         dim = find_col(cats) or (cats[0] if cats else None)
-        measure = find_col(numeric)
-        if measure is None and numeric and (sum_intent or not count_intent):
+        measure = find_col(numeric) if not listing else (find_col(numeric) or None)
+        if measure is None and numeric:
             measure = _primary_measure(rows, numeric)
-        if dim:
-            if measure and not count_intent:
-                agg: Dict[str, float] = defaultdict(float)
-                for r in rows:
-                    k = r.get(dim)
-                    m = _to_number(r.get(measure))
-                    if k not in (None, "") and m is not None:
-                        agg[str(k)] += m
-                if agg:
-                    k, v = (min if low else max)(agg.items(), key=lambda x: x[1])
-                    return f"By total {measure}, {dim} '{k}' is {'lowest' if low else 'highest'} ({_fmt(v)})."
+        if dim and measure:
+            result = _rank_by_measure(dim, measure)
+            if result:
+                return result
+        if superlative and dim and not measure and (grouping or find_col(cats)):
             cnt = Counter(str(r.get(dim)) for r in rows if r.get(dim) not in (None, ""))
             if cnt:
                 items = cnt.most_common()
                 k, v = (items[-1] if low else items[0])
-                return f"{'Least' if low else 'Most'} common {dim}: '{k}' ({v} rows)."
+                return f"{'Least' if low else 'Most'} frequent {dim} (by row count): '{k}' ({v} rows)."
+
+    elif superlative and (grouping or find_col(cats)) and count_intent:
+        dim = find_col(cats) or (cats[0] if cats else None)
+        if dim:
+            cnt = Counter(str(r.get(dim)) for r in rows if r.get(dim) not in (None, ""))
+            if cnt:
+                items = cnt.most_common()
+                k, v = (items[-1] if low else items[0])
+                return f"{'Least' if low else 'Most'} frequent {dim} by row count: '{k}' ({v} rows)."
 
     col = find_col(numeric)
     if col and any(w in q for w in ["average", "avg", "mean"]):
@@ -308,15 +331,21 @@ def answer_locally(question: str, sheets: List[Dict[str, Any]]) -> str:
 
     dim = find_col(cats)
     if dim and any(w in q for w in ["distinct", "unique", "list", "what are", "which values", "categories", "breakdown"]):
+        if not count_intent and numeric:
+            measure = find_col(numeric) or _primary_measure(rows, numeric)
+            if measure:
+                result = _rank_by_measure(dim, measure)
+                if result:
+                    return result
         cnt = Counter(str(r.get(dim)) for r in rows if r.get(dim) not in (None, ""))
-        return f"{dim} values: " + ", ".join(f"{k} ({v})" for k, v in cnt.most_common(12)) + "."
+        return f"{dim} values (by row count): " + ", ".join(f"{k} ({v})" for k, v in cnt.most_common(12)) + "."
 
     return ("Here's what I can read from this sheet: " +
             " ".join(build_digest([s])["sheets"][0]["highlights"]) +
             " Ask about row counts, totals, averages, category breakdowns, or data quality.")
 
 
-# ── Legacy aliases ────────────────────────────────────────────────────────────
+# ── Legacy aliases (used by digest endpoint and other callers) ────────────────
 
 def build_sheet_context(sheets: List[Dict[str, Any]], max_sample: int = 12) -> Dict[str, Any]:
     """Legacy alias — returns {text, profile} compatible with old callers."""
