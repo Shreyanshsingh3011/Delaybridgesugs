@@ -34,6 +34,65 @@ from sheet_loader import load_clean_sheets, compute_type_kpis
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/public")
 
+async def _build_sheet_analysis(db, sheet: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a per-sheet analysis entry driven by dbridge_sheet_types.analysis_rules.analysis_shape.
+    Falls back to generic (row/column counts) when no shape is registered for the type."""
+    label = sheet.get("label", "")
+    sheet_type = sheet.get("sheet_type")
+    rows = sheet.get("rows_raw") or []
+    headers = sheet.get("headers") or []
+    if headers and isinstance(headers[0], dict):
+        headers = [h.get("name", "") for h in headers]
+
+    row_count = len(rows)
+    num_cols = sum(
+        1 for h in headers
+        if any(isinstance(r.get(h), (int, float)) for r in rows[:20])
+    )
+    cat_cols = len(headers) - num_cols
+
+    type_kpis_map = {k["label"]: k["value"] for k in (sheet.get("type_kpis") or [])}
+
+    analysis_shape = None
+    if sheet_type:
+        try:
+            type_rows = await db.raw_select("dbridge_sheet_types", {"id": sheet_type})
+            if type_rows:
+                rules = type_rows[0].get("analysis_rules") or {}
+                analysis_shape = rules.get("analysis_shape")
+        except Exception as e:
+            logger.warning("_build_sheet_analysis: failed to load type %r: %s", sheet_type, e)
+
+    if analysis_shape:
+        mode_label = analysis_shape.get("mode_label", "Typed Analysis")
+        totals_labels = analysis_shape.get("totals") or []
+        totals = [
+            {"label": lbl, "value": type_kpis_map[lbl]}
+            for lbl in totals_labels if lbl in type_kpis_map
+        ]
+        summary_template = analysis_shape.get("summary_template", "{rows} rows analysed.")
+        kpi_vals = {k.replace(" ", "_").lower(): v for k, v in type_kpis_map.items()}
+        try:
+            summary = summary_template.format(rows=row_count, **kpi_vals)
+        except Exception:
+            summary = f"{row_count} rows analysed."
+    else:
+        mode_label = "Generic Analysis"
+        totals = [
+            {"label": "Rows", "value": row_count},
+            {"label": "Numeric Columns", "value": num_cols},
+            {"label": "Categorical Columns", "value": cat_cols},
+        ]
+        summary = f"{row_count} rows · {num_cols} numeric / {cat_cols} categorical columns"
+
+    return {
+        "sheet": label,
+        "sheet_type": sheet_type,
+        "mode_label": mode_label,
+        "summary": summary,
+        "totals": totals,
+    }
+
 
 async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     try:
@@ -249,26 +308,27 @@ async def get_dashboard(token: str):
     else:
         out["sheets"] = []
 
-    # Analysis sections (summary / totals / status_breakdown / flags + extended fields)
-    analysis = sess.get("analysis") or {}
+     # Config-driven analysis block — shape comes from dbridge_sheet_types.analysis_rules.analysis_shape
     sections = {}
-    if want("summary") and analysis.get("summary") is not None:
-        sections["summary"] = analysis.get("summary")
-    if want("totals") and analysis.get("totals") is not None:
-        sections["totals"] = analysis.get("totals")
-    if want("status_breakdown") and analysis.get("status_breakdown") is not None:
-        sections["status_breakdown"] = analysis.get("status_breakdown")
-    if want("flags"):
-        sections["flags"] = analysis.get("flags", [])
-    # Extended analytical outputs (delay-analysis), included only if enabled + present
-    for f in ("risk_score", "top_delay_reasons", "correlation_matrix",
-              "dependency_chains", "person_ranking", "department_ranking",
-              "timeline_correlation", "tat_performance", "variance"):
-        if want(f) and analysis.get(f) is not None:
-            sections[f] = analysis.get(f)
-    sections["mode_badge"] = ("Variance Analysis Enabled" if analysis.get("mode") == "multi-sheet"
-                              else "Single Sheet Mode — Delay Analysis Active")
-    sections["copilot_enabled"] = want("copilot")
+    try:
+        sheet_analyses = []
+        for s in sheets:
+            sheet_analyses.append(await _build_sheet_analysis(db, s))
+
+        has_typed = any(sa.get("sheet_type") for sa in sheet_analyses)
+        sections["mode"] = "typed" if has_typed else "generic"
+        sections["sheet_analyses"] = sheet_analyses
+
+        # Legacy mode_badge for any frontend reading the old key
+        unique_labels = list(dict.fromkeys(sa["mode_label"] for sa in sheet_analyses))
+        sections["mode_badge"] = ", ".join(unique_labels)
+
+        sections["flags"] = []
+        sections["copilot_enabled"] = want("copilot")
+    except Exception as e:
+        logger.warning("dashboard analysis block failed: %s", e)
+        sections = {"mode": "error", "sheet_analyses": [], "flags": [],
+                    "copilot_enabled": want("copilot")}
     out["analysis"] = sections
 
     # Computed modules (from raw sheet rows) — each gated by export field and isolated
@@ -1195,10 +1255,22 @@ async def get_raw_head(token: str, sheet: str = "", rows: int = 10):
     try:
         sheet_types = await db.raw_select("dbridge_sheet_types") or []
         if sheet_types:
-            # Resolve headers using the suggested row to get meaningful column names
-            from header_detector import resolve_headers as _rh
-            pseudo_hm = {"header_row_index": suggested_header_row}
-            resolved_headers, _ = _rh(rows_raw, pseudo_hm)
+                     # Resolve the column names to score signatures against.
+            # If the sheet's dict keys are already real names (not positional
+            # column letters/indices), the keys ARE the headers — scoring off a
+            # detected data row would compare against cell values like "Total"
+            # and zero out every type. Only fall back to header-row resolution
+            # when the keys are positional.
+            from header_detector import (
+                resolve_headers as _rh,
+                _looks_like_positional_keys as _positional,
+            )
+            existing_keys = [str(k) for k in rows_raw[0].keys()] if rows_raw else []
+            if existing_keys and not _positional(existing_keys):
+                resolved_headers = existing_keys
+            else:
+                pseudo_hm = {"header_row_index": suggested_header_row}
+                resolved_headers, _ = _rh(rows_raw, pseudo_hm)
             lower_headers = {h.lower() for h in resolved_headers}
             for st in sheet_types:
                 sigs = st.get("signature_columns") or []
