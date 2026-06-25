@@ -369,9 +369,77 @@ async def get_dashboard(token: str):
         except Exception as e:
             logger.warning("dashboard module trends failed: %s", e)
 
-    if modules:
+        if modules:
         out["modules"] = modules
+
+    # AI narrative summary — grounded in already-computed module signals
+    out["ai_summary"] = await _build_ai_summary(token, sheets, modules)
+
     return out
+
+
+async def _build_ai_summary(token: str, sheets: List[Dict[str, Any]], modules: Dict[str, Any]) -> str:
+    """Generate a 4-6 sentence narrative from computed signals.
+    Falls back to digest prose when no API key is set. Cached per token."""
+    _AI_CACHE = _build_ai_summary.__dict__.setdefault("_cache", {})
+    cache_key = token + "|" + "|".join(s.get("label", "") for s in sheets)
+    if cache_key in _AI_CACHE:
+        return _AI_CACHE[cache_key]
+
+    facts = []
+    try:
+        digest = modules.get("digest") or {}
+        facts += (digest.get("facts") or [])[:6]
+    except Exception:
+        pass
+    try:
+        dq = modules.get("data_quality") or {}
+        score = (dq.get("sheets") or [{}])[0].get("score")
+        if score is not None:
+            facts.append(f"Data quality score: {score}/100.")
+        for issue in ((dq.get("sheets") or [{}])[0].get("issues") or {}).get("missing", [])[:2]:
+            facts.append(f"Missing values in {issue['column']} ({issue['missing_count']} rows).")
+    except Exception:
+        pass
+    try:
+        for rec in (modules.get("recommendations") or {}).get("recommendations", [])[:3]:
+            facts.append(f"Suggestion: {rec.get('text') or rec.get('recommendation', '')}.")
+    except Exception:
+        pass
+    try:
+        anom = modules.get("anomalies") or {}
+        for sh in (anom.get("sheets") or [])[:1]:
+            n = len(sh.get("flagged_rows") or [])
+            if n:
+                facts.append(f"{n} statistical outliers detected in {sh.get('label', 'this sheet')}.")
+    except Exception:
+        pass
+
+    fallback = " ".join(f for f in facts if f).strip() or "No data signals available yet."
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or ""
+    if not api_key or not facts:
+        _AI_CACHE[cache_key] = fallback
+        return fallback
+
+    try:
+        sys_prompt = (
+            "You are a data analyst writing a concise dashboard narrative. "
+            "Write 4-6 sentences describing what this dataset shows and what to act on. "
+            "Use ONLY the computed facts below — never invent numbers. "
+            "Mark any non-factual interpretation clearly as a suggestion. "
+            "Do not use bullet points.\n\nCOMPUTED FACTS:\n- " + "\n- ".join(facts)
+        )
+        summary = await chat_send(api_key, f"ai_summary:{cache_key}", sys_prompt,
+                                  "Write the narrative now.", max_tokens=300)
+        if summary and "disabled" not in summary.lower() and "unavailable" not in summary.lower():
+            _AI_CACHE[cache_key] = summary
+            return summary
+    except Exception as e:
+        logger.warning("_build_ai_summary: chat_send failed: %s", e)
+
+    _AI_CACHE[cache_key] = fallback
+    return fallback
 
 
 @router.get("/{token}/quality")
