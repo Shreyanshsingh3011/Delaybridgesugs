@@ -10,7 +10,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+CLAUDE_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
 ADMIN_SUGGESTIONS = [
     "What is the current risk score and why?",
@@ -112,8 +112,9 @@ async def chat_send(
     session_id: str,
     system_prompt: str,
     message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    max_tokens: int = 1024,
 ) -> str:
-    # Prefer an explicit Anthropic key from the environment; fall back to the passed key.
     key = os.environ.get("ANTHROPIC_API_KEY") or (api_key if api_key and api_key.startswith("sk-") else "")
     if not key:
         return (
@@ -121,6 +122,7 @@ async def chat_send(
             "ANTHROPIC_API_KEY environment variable on the server. All other "
             "analytics (flags, variances, dependencies, downstream impact) work normally."
         )
+    messages = list(history or []) + [{"role": "user", "content": message}]
     try:
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -131,9 +133,9 @@ async def chat_send(
             },
             json={
                 "model": CLAUDE_MODEL,
-                "max_tokens": 1024,
+                "max_tokens": max_tokens,
                 "system": system_prompt,
-                "messages": [{"role": "user", "content": message}],
+                "messages": messages,
             },
             timeout=60,
         )
