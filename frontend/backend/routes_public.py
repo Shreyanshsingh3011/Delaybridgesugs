@@ -369,7 +369,7 @@ async def get_dashboard(token: str):
         except Exception as e:
             logger.warning("dashboard module trends failed: %s", e)
 
-    if modules:
+    if modules:   
         out["modules"] = modules
 
     # AI narrative summary — grounded in already-computed module signals
