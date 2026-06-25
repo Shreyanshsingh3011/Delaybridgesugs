@@ -78,42 +78,102 @@ def _sum_by(rows, cat_col, num_col, top=8):
     return [{"name": k, "value": round(v, 2)} for k, v in items]
 
 
+_SUBTOTAL_PAT = re.compile(r"^\s*(total|sub.?total|grand.?total)\s*$", re.IGNORECASE)
+
+
+def _is_subtotal(row: Dict[str, Any], headers: List[str]) -> bool:
+    if not headers:
+        return False
+    first = str(row.get(headers[0], "")).strip()
+    return bool(_SUBTOTAL_PAT.match(first))
+
+
+def _sum_by_text(rows, text_col, num_col, top=10):
+    """Sum num_col grouped by text_col, excluding subtotal rows, top N by value."""
+    agg: Dict[str, float] = defaultdict(float)
+    headers = list(rows[0].keys()) if rows else []
+    for r in rows:
+        if _is_subtotal(r, headers):
+            continue
+        key = r.get(text_col)
+        num = _to_number(r.get(num_col))
+        if key in (None, "") or num is None:
+            continue
+        agg[str(key)] += num
+    items = sorted(agg.items(), key=lambda kv: kv[1], reverse=True)[:top]
+    return [{"name": k, "value": round(v, 2)} for k, v in items]
+
+
+def _count_by_text(rows, text_col, top=10):
+    """Count occurrences of text_col values, excluding subtotal rows, top N."""
+    headers = list(rows[0].keys()) if rows else []
+    c: Counter = Counter()
+    for r in rows:
+        if _is_subtotal(r, headers):
+            continue
+        v = r.get(text_col)
+        if v not in (None, ""):
+            c[str(v)] += 1
+    items = c.most_common(top)
+    return [{"name": k, "value": v} for k, v in items]
+
+
 def _build_one(sheet: Dict[str, Any], max_rows: int) -> Dict[str, Any]:
     rows = sheet.get("rows_raw") or []
     headers = list(rows[0].keys()) if rows else (sheet.get("headers") or [])
     cols = _infer_columns(rows, headers)
-    by_type = defaultdict(list)
+    by_type: Dict[str, List[str]] = defaultdict(list)
     for c in cols:
         by_type[c["type"]].append(c["name"])
 
+    data_rows = [r for r in rows if not _is_subtotal(r, headers)]
+
     # KPIs
-    kpis = [{"label": "Rows", "value": len(rows)}]
+    kpis = [{"label": "Rows", "value": len(data_rows)}]
     for num_col in by_type["number"][:3]:
-        total = sum(_to_number(r.get(num_col)) or 0 for r in rows)
+        total = sum(_to_number(r.get(num_col)) or 0 for r in data_rows)
         kpis.append({"label": f"Σ {num_col}", "value": round(total, 2)})
     if by_type["category"]:
         kpis.append({"label": f"{by_type['category'][0]} types",
                      "value": next((c["distinct"] for c in cols if c["name"] == by_type["category"][0]), 0)})
+    # Distinct-count KPI for the primary text column (high-cardinality)
+    if by_type["text"]:
+        text_col = by_type["text"][0]
+        distinct_count = len(set(
+            str(r.get(text_col)) for r in data_rows if r.get(text_col) not in (None, "")
+        ))
+        kpis.append({"label": f"{text_col} (distinct)", "value": distinct_count})
 
     # Charts
     charts = []
     cat_cols = by_type["category"]
     for cat in cat_cols[:3]:
         charts.append({"type": "bar", "title": f"Count by {cat}", "x": "name", "y": "value",
-                       "data": _counts(rows, cat)})
+                       "data": _counts(data_rows, cat)})
     if cat_cols and by_type["number"]:
         cat, num = cat_cols[0], by_type["number"][0]
         charts.append({"type": "bar", "title": f"{num} by {cat}", "x": "name", "y": "value",
-                       "data": _sum_by(rows, cat, num)})
-    if not cat_cols and by_type["category"] == [] and len(cat_cols) == 0 and by_type["number"]:
-        # fall back: distribution of the first numeric column bucketed is overkill; skip
-        pass
+                       "data": _sum_by(data_rows, cat, num)})
+
+    # Top-10 chart for high-cardinality text column
+    if by_type["text"]:
+        text_col = by_type["text"][0]
+        if by_type["number"]:
+            num_col = by_type["number"][0]
+            chart_data = _sum_by_text(data_rows, text_col, num_col, top=10)
+            title = f"Top 10 {text_col} by {num_col}"
+        else:
+            chart_data = _count_by_text(data_rows, text_col, top=10)
+            title = f"Top 10 {text_col} by count"
+        if chart_data:
+            charts.append({"type": "bar", "title": title, "x": "name", "y": "value",
+                           "data": chart_data})
 
     return {
         "label": sheet.get("label"),
         "name": sheet.get("name") or sheet.get("label"),
         "color": sheet.get("color", "blue"),
-        "row_count": len(rows),
+        "row_count": len(data_rows),
         "columns": cols,
         "kpis": kpis,
         "charts": charts,
