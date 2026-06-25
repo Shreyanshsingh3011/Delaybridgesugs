@@ -370,7 +370,7 @@ async def get_dashboard(token: str):
             logger.warning("dashboard module trends failed: %s", e)
 
     if modules:
-        out["modules"] = modules
+    out["modules"] = modules
     return out
 
 
