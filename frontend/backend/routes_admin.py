@@ -29,9 +29,45 @@ from normalizer import detect_columns, normalize_rows, data_quality
 from analysis import analyze_single_sheet
 from variance import compute_variances, column_similarity
 from flags import generate_flags
+from sheet_loader import detect_sheet_type
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+
+async def _load_type_rules(db, sheet_type: Optional[str]) -> Dict[str, Any]:
+    """Fetch a sheet type's analysis_rules. Returns {} on any failure / missing type."""
+    if not sheet_type:
+        return {}
+    try:
+        rows = await db.raw_select("dbridge_sheet_types", {"id": sheet_type})
+        if rows:
+            return rows[0].get("analysis_rules") or {}
+    except Exception as e:
+        logger.warning("_load_type_rules: failed for %r: %s", sheet_type, e)
+    return {}
+
+
+def _is_delay_type(rules: Optional[Dict[str, Any]]) -> bool:
+    """True when the chosen type's analysis_rules declare delay-style required
+    columns (activity / reason). Legacy sheets with no rules keep the historical
+    default (delay analysis runs). The generic fallback never runs delay flags."""
+    if not rules:
+        return True  # legacy default — behave exactly as before
+    if rules.get("is_fallback") or rules.get("no_required_columns"):
+        return False
+    match_columns = rules.get("match_columns") or {}
+    blob_parts: List[str] = [str(k) for k in match_columns.keys()]
+    for v in match_columns.values():
+        if isinstance(v, list):
+            blob_parts.extend(str(x) for x in v)
+        else:
+            blob_parts.append(str(v))
+    blob = " ".join(blob_parts).lower()
+    return ("activity" in blob) or ("reason" in blob)
 
 
 # -------- Auth --------
@@ -357,7 +393,27 @@ async def _run_and_persist_analysis(db, sess: Dict[str, Any], sheets: List[Dict[
             sim_val = column_similarity(primary_headers, s.get("headers", []))
             variance_result.setdefault("column_similarity", {})[s["label"]] = round(sim_val, 2)
 
-    flags = generate_flags(primary_rows, delay.get("dependency_chains") or {}, variance_result)
+    # Type-driven flags only: emit delay/required-column flags ONLY when the
+    # primary sheet resolves to a delay-style type. Non-delay or generic types
+    # produce no required-column flags (just KPIs / row counts elsewhere).
+    run_delay = True
+    try:
+        primary_hm = hm_by_label.get(primary_label)
+        primary_sheet = next((s for s in sheets if s.get("label") == primary_label), None)
+        primary_headers_resolved: List[str] = []
+        if primary_sheet is not None:
+            rh, _ = resolve_headers(primary_sheet.get("rows_raw") or [], primary_hm)
+            primary_headers_resolved = rh
+        primary_type = await detect_sheet_type(
+            db, primary_headers_resolved, (primary_hm or {}).get("sheet_type")
+        )
+        primary_rules = await _load_type_rules(db, primary_type)
+        run_delay = _is_delay_type(primary_rules)
+    except Exception as e:
+        logger.warning("_run_and_persist_analysis: type gating failed, defaulting to delay: %s", e)
+        run_delay = True
+
+    flags = generate_flags(primary_rows, delay.get("dependency_chains") or {}, variance_result) if run_delay else []
 
     summary_text_parts = [
         f"{delay['totals']['rows']} rows analysed.",

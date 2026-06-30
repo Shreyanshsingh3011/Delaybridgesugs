@@ -49,8 +49,12 @@ def _parse_date(val: Any) -> Optional[date]:
 
 
 def _coerce_float(val: Any) -> Optional[float]:
+    # Tolerate Indian grouping and surrounding quotes; strip ALL thousands commas.
     try:
-        return float(str(val).replace(",", "").replace("%", "").strip())
+        s = str(val).strip().strip('"').strip("'").strip().replace("%", "").replace(",", "")
+        if s in ("", "-", "—", "–"):
+            return None
+        return float(s)
     except (ValueError, TypeError):
         return None
 
@@ -61,6 +65,77 @@ def _is_skip_row(row: Dict[str, Any], headers: List[str]) -> bool:
         return False
     first = str(row.get(headers[0], "")).strip().lower()
     return first in _SKIP_DESCRIPTIONS
+
+
+# ── Sheet-type detection ─────────────────────────────────────────────────────
+
+_WS_RE = re.compile(r"\s+")
+
+
+def _norm_name(v: Any) -> str:
+    """Normalize a column name: lowercase, trim, collapse internal whitespace."""
+    if isinstance(v, dict):
+        v = v.get("name", "")
+    return _WS_RE.sub(" ", str(v or "").strip().lower())
+
+
+def score_sheet_type(headers: List[Any], sheet_types: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Score every non-generic type's signature_columns against the headers.
+
+    Returns {"best": <id or None>, "score": float, "matched": int, "scores": {id: score}}.
+    Match is case-insensitive exact-or-substring (signature found in a column name).
+    Never divides by zero on empty signatures.
+    """
+    norm_headers = [h for h in (_norm_name(h) for h in (headers or [])) if h]
+    scores: Dict[str, float] = {}
+    best_id: Optional[str] = None
+    best_score = 0.0
+    best_matched = 0
+    if not norm_headers:
+        return {"best": None, "score": 0.0, "matched": 0, "scores": scores}
+
+    for st in sheet_types or []:
+        tid = st.get("id")
+        if not tid or tid == "type_generic":
+            continue
+        sigs = st.get("signature_columns") or []
+        if not sigs:
+            continue
+        matched = 0
+        for sig in sigs:
+            ns = _norm_name(sig)
+            if not ns:
+                continue
+            if any(ns == h or ns in h for h in norm_headers):
+                matched += 1
+        score = matched / len(sigs)
+        scores[tid] = round(score, 3)
+        if score > best_score or (score == best_score and matched > best_matched):
+            best_id, best_score, best_matched = tid, score, matched
+
+    return {"best": best_id, "score": best_score, "matched": best_matched, "scores": scores}
+
+
+async def detect_sheet_type(
+    db, headers: List[Any], override_type: Optional[str] = None
+) -> str:
+    """Resolve a sheet's type id.
+
+    Order: explicit override (when non-null) → signature auto-detection → 'type_generic'.
+    Auto-detection picks the highest-scoring type; if best score < 0.4 OR fewer than
+    2 signature columns matched, falls back to 'type_generic'. Never raises.
+    """
+    if override_type:
+        return override_type
+    try:
+        sheet_types = await db.raw_select("dbridge_sheet_types") or []
+        result = score_sheet_type(headers, sheet_types)
+        if result["best"] and result["score"] >= 0.4 and result["matched"] >= 2:
+            return result["best"]
+        return "type_generic"
+    except Exception as e:
+        logger.warning("detect_sheet_type: failed, using generic: %s", e)
+        return "type_generic"
 
 
 # ── Core loader ──────────────────────────────────────────────────────────────
@@ -91,8 +166,9 @@ async def load_clean_sheet(db, token: str, sheet: Dict[str, Any]) -> Dict[str, A
         s["headers"] = headers
         s["columns"] = len(headers)
         s["pruned_empty_columns"] = n_pruned
-        if hm and hm.get("sheet_type"):
-            s["sheet_type"] = hm["sheet_type"]
+        # Override first; otherwise auto-detect by signature; otherwise generic.
+        override_type = hm.get("sheet_type") if hm else None
+        s["sheet_type"] = await detect_sheet_type(db, headers, override_type)
         return s
     except Exception as e:
         logger.warning("load_clean_sheet: failed for sheet %r, using raw: %s",

@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from models import (
@@ -28,7 +29,8 @@ from normalizer import normalize_rows
 from routes_admin import _run_and_persist_analysis
 from header_detector import resolve_headers, detect_header_row
 from sheet_cleaner import clean_sheet
-from sheet_loader import load_clean_sheets, compute_type_kpis
+from sheet_loader import load_clean_sheets, compute_type_kpis, detect_sheet_type
+from sheet_source import load_direct_sheet, SheetAccessError
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,32 @@ async def _build_sheet_analysis(db, sheet: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _sheet_cfg(s: Dict[str, Any], *names, default=None):
+    """Read a sheet config value tolerating snake_case / camelCase aliases."""
+    for n in names:
+        if s.get(n) not in (None, ""):
+            return s.get(n)
+    return default
+
+
+def _direct_rows_for_sheet(
+    s: Dict[str, Any], hm: Optional[Dict[str, Any]] = None
+) -> Optional[List[Dict[str, str]]]:
+    """If the sheet is in direct ingest mode, fetch its rows straight from Google.
+    Ingest config is read from the header-mapping record first (the per-token
+    connector store), then the sheet record. Returns positional rows_raw, or None
+    when not in direct mode. Raises SheetAccessError on a private sheet."""
+    cfg = {**(s or {}), **{k: v for k, v in (hm or {}).items() if v not in (None, "")}}
+    mode = str(_sheet_cfg(cfg, "ingest_mode", "ingestMode", "source_type", "sourceType",
+                          default="proxy")).lower()
+    if mode != "direct":
+        return None
+    sheet_id = _sheet_cfg(cfg, "sheet_id", "sheetId")
+    gid = str(_sheet_cfg(cfg, "gid", default="0"))
+    ttl = int(_sheet_cfg(cfg, "cache_ttl_seconds", "cacheTTLSeconds", default=300) or 300)
+    return load_direct_sheet(sheet_id, gid, ttl=ttl)
+
+
 async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     try:
         hm_list = await db.raw_select("dbridge_header_mappings", {"token": token})
@@ -106,8 +134,16 @@ async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Di
         orig = s
         try:
             s = dict(s)
-            rows_raw = s.get("rows_raw") or []
             hm = hm_by_label.get(s.get("label", ""))
+            # Direct Google ingestion (opt-in per sheet); falls back to stored rows.
+            try:
+                direct = _direct_rows_for_sheet(s, hm)
+                if direct is not None:
+                    s["rows_raw"] = direct
+            except SheetAccessError as e:
+                logger.warning("_clean_sheets: direct fetch failed for %r: %s", s.get("label"), e)
+                s["ingest_error"] = str(e)
+            rows_raw = s.get("rows_raw") or []
             protected = set((hm or {}).get("column_overrides", {}).values()) if hm else set()
             headers, resolved_rows = resolve_headers(rows_raw, hm)
             headers, resolved_rows, n_pruned = clean_sheet(headers, resolved_rows, protected)
@@ -115,8 +151,9 @@ async def _clean_sheets(db, token: str, sheets: List[Dict[str, Any]]) -> List[Di
             s["headers"] = headers
             s["columns"] = len(headers)
             s["pruned_empty_columns"] = n_pruned
-            if hm and hm.get("sheet_type"):
-                s["sheet_type"] = hm["sheet_type"]
+            # Override first; otherwise auto-detect by signature; otherwise generic.
+            override_type = hm.get("sheet_type") if hm else None
+            s["sheet_type"] = await detect_sheet_type(db, headers, override_type)
         except Exception as e:
             logger.warning("_clean_sheets: sheet %r cleaning failed, using raw: %s", orig.get("label"), e)
             s = orig
@@ -440,6 +477,66 @@ async def _build_ai_summary(token: str, sheets: List[Dict[str, Any]], modules: D
 
     _AI_CACHE[cache_key] = fallback
     return fallback
+
+
+@router.get("/{token}/export")
+async def export_sheet(token: str, sheet: Optional[str] = None, format: str = "json"):
+    """Clean, typed, correctly-named rows for a token — the proxy-free export link.
+
+    ?format=csv returns clean CSV; otherwise JSON. ?sheet=<label> selects one sheet
+    (defaults to the first connected sheet). Surfaces a clear error for private
+    sheets in direct ingest mode rather than returning garbage."""
+    import csv as _csv
+    import io as _io
+    from server import db
+
+    sess = await _get_by_token(db, token)
+    sheets = [s for s in sess.get("sheets", []) if s.get("connected")]
+    if not sheets:
+        raise HTTPException(status_code=404, detail="No connected sheets for this token.")
+
+    cleaned = await _clean_sheets(db, token, sheets)
+
+    if sheet:
+        target = next((s for s in cleaned if s.get("label") == sheet), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Sheet {sheet!r} not found.")
+    else:
+        target = cleaned[0]
+
+    # Private-sheet (direct mode) access error → surface clearly, not garbage.
+    if target.get("ingest_error") and not (target.get("rows_raw")):
+        raise HTTPException(status_code=502, detail=target["ingest_error"])
+
+    rows = target.get("rows_raw") or []
+    headers = target.get("headers") or (list(rows[0].keys()) if rows else [])
+
+    if format.lower() == "csv":
+        buf = _io.StringIO()
+        writer = _csv.DictWriter(buf, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({h: r.get(h, "") for h in headers})
+        return PlainTextResponse(buf.getvalue(), media_type="text/csv")
+
+    try:
+        kpi_result = await compute_type_kpis(db, target)
+        type_kpis = kpi_result.get("type_kpis", [])
+    except Exception:
+        type_kpis = []
+
+    return {
+        "token": token,
+        "project": sess.get("name"),
+        "sheet": target.get("label"),
+        "sheet_type": target.get("sheet_type"),
+        "department": _sheet_cfg(target, "department"),
+        "columns": headers,
+        "count": len(rows),
+        "type_kpis": type_kpis,
+        "ingest_error": target.get("ingest_error"),
+        "data": rows,
+    }
 
 
 @router.get("/{token}/quality")
@@ -1402,3 +1499,57 @@ async def upsert_header_mapping(token: str, payload: HeaderMappingCreate):
     }
     await db.raw_upsert("dbridge_header_mappings", record)
     return {"ok": True, "id": record_id}
+
+
+class IngestConfig(BaseModel):
+    sheet_label: str
+    ingest_mode: Optional[str] = None          # "direct" | "proxy"
+    sheet_id: Optional[str] = None
+    gid: Optional[str] = None
+    cache_ttl_seconds: Optional[int] = None
+    header_row: Optional[int] = None           # 1-based; forces the header row
+    department: Optional[str] = None
+
+
+@router.post("/{token}/ingest-config")
+async def set_ingest_config(token: str, payload: IngestConfig):
+    """Set per-sheet direct-ingestion config on the header-mapping record.
+
+    Merge-safe: only the provided fields are changed; existing header mapping /
+    type / override settings are preserved. Flip a sheet to direct Google
+    ingestion with ingest_mode='direct' + sheet_id (+ optional gid/header_row)."""
+    from server import db
+    await _get_by_token(db, token)
+    record_id = f"{token}__{payload.sheet_label}"
+
+    existing: Dict[str, Any] = {}
+    try:
+        rows = await db.raw_select("dbridge_header_mappings", {"id": record_id})
+        if rows:
+            existing = rows[0]
+    except Exception as e:
+        logger.warning("set_ingest_config: fetch existing failed: %s", e)
+
+    record = dict(existing)
+    record.update({
+        "id": record_id,
+        "token": token,
+        "sheet_label": payload.sheet_label,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    for field in ("ingest_mode", "sheet_id", "gid", "cache_ttl_seconds",
+                  "header_row", "department"):
+        val = getattr(payload, field)
+        if val is not None:
+            record[field] = val
+
+    # Direct ingestion changes the upstream rows — drop any stale direct cache.
+    if record.get("sheet_id"):
+        try:
+            from sheet_source import clear_cache
+            clear_cache(record["sheet_id"], str(record.get("gid") or "0"))
+        except Exception:
+            pass
+
+    await db.raw_upsert("dbridge_header_mappings", record)
+    return {"ok": True, "id": record_id, "ingest_mode": record.get("ingest_mode")}
