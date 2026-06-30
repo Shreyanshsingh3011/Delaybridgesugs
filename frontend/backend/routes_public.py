@@ -1512,66 +1512,113 @@ class IngestConfig(BaseModel):
 
 
 async def _apply_ingest_config(
-    db, sess: Dict[str, Any], token: str, sheet_label: Optional[str],
-    fields: Dict[str, Any],
+    db, token: str, sheet_label: Optional[str], fields: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Merge-safe write of direct-ingestion config into dbridge_header_mappings.
+    """Fetch-or-create a session for the token and write direct-ingestion config
+    onto its sheet record (and mirror header_row/sheet_type into the header
+    mapping). Provisions a minimal session when the token has none yet, so a
+    proxy token URL can be replaced by a self-contained DelayBridge link.
 
-    If sheet_label is omitted, defaults to the session's first connected sheet
-    (so single-sheet tokens need no label). Only provided fields are changed."""
-    if not sheet_label:
-        connected = [s for s in sess.get("sheets", []) if s.get("connected")]
-        if not connected:
-            raise HTTPException(status_code=404, detail="No connected sheets for this token.")
-        sheet_label = connected[0].get("label")
+    Merge-safe: only the provided fields are changed."""
+    now = datetime.now(timezone.utc).isoformat()
+    sheet_cfg = {k: v for k, v in fields.items() if v is not None}
+    label = sheet_label or "Sheet1"
 
-    record_id = f"{token}__{sheet_label}"
-    existing: Dict[str, Any] = {}
-    try:
-        rows = await db.raw_select("dbridge_header_mappings", {"id": record_id})
-        if rows:
-            existing = rows[0]
-    except Exception as e:
-        logger.warning("_apply_ingest_config: fetch existing failed: %s", e)
+    sess = await db.sessions.find_one({"public_token": token}, {"_id": 0})
+    created = False
 
-    record = dict(existing)
-    record.update({
-        "id": record_id,
-        "token": token,
-        "sheet_label": sheet_label,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-    for key, val in fields.items():
-        if val is not None:
-            record[key] = val
+    if not sess:
+        # Provision a minimal session so /export, /dashboard, copilot work.
+        sheet_rec = {
+            "label": label, "name": label, "connected": True,
+            "rows_raw": [], "headers": [], "columns": 0,
+            "color": "blue", "last_fetched": now,
+            **sheet_cfg,
+        }
+        doc = {
+            "id": str(uuid.uuid4()),
+            "owner_id": None,
+            "name": fields.get("department") or label,
+            "public_token": token,
+            "sheets": [sheet_rec],
+            "analysis": None,
+            "export_fields": [],
+            "auto_provisioned": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.sessions.insert_one(doc)
+        created = True
+    else:
+        sheets = sess.get("sheets", []) or []
+        if sheet_label:
+            target = next((s for s in sheets if s.get("label") == sheet_label), None)
+        else:
+            target = next((s for s in sheets if s.get("connected")), None) or (sheets[0] if sheets else None)
+        if target is None:
+            target = {"label": label, "name": label, "rows_raw": [],
+                      "headers": [], "columns": 0, "color": "blue"}
+            sheets.append(target)
+        else:
+            label = target.get("label", label)
+        target.update(sheet_cfg)
+        target["connected"] = True
+        await db.sessions.update_one(
+            {"public_token": token},
+            {"$set": {"sheets": sheets, "updated_at": now}},
+        )
 
-    # Direct ingestion changes the upstream rows — drop any stale direct cache.
-    if record.get("sheet_id"):
+    # Mirror a forced header row into the header-mapping record. NOTE:
+    # dbridge_header_mappings is a FLAT table — only its real columns may be
+    # written (ingest_mode/sheet_id/gid have no columns there, so they live on
+    # the jsonb session sheet record above). header_row (1-based) maps to the
+    # existing header_row_index (0-based) column.
+    if fields.get("header_row") is not None:
+        try:
+            record_id = f"{token}__{label}"
+            hm_rows = await db.raw_select("dbridge_header_mappings", {"id": record_id})
+            if hm_rows:
+                hm = dict(hm_rows[0])
+            else:
+                hm = {
+                    "id": record_id, "token": token, "sheet_label": label,
+                    "by_index": False, "column_overrides": {},
+                    "drop_empty_named": False, "keep_only_mapped": False,
+                }
+            hm["token"] = token
+            hm["sheet_label"] = label
+            hm["updated_at"] = now
+            try:
+                hm["header_row_index"] = int(fields["header_row"]) - 1
+            except (ValueError, TypeError):
+                pass
+            await db.raw_upsert("dbridge_header_mappings", hm)
+        except Exception as e:
+            logger.warning("_apply_ingest_config: header-mapping mirror failed: %s", e)
+
+    # Direct ingestion changes upstream rows — drop any stale cache.
+    if fields.get("sheet_id"):
         try:
             from sheet_source import clear_cache
-            clear_cache(record["sheet_id"], str(record.get("gid") or "0"))
+            clear_cache(fields["sheet_id"], str(fields.get("gid") or "0"))
         except Exception:
             pass
 
-    await db.raw_upsert("dbridge_header_mappings", record)
-    return {"ok": True, "id": record_id, "sheet_label": sheet_label,
-            "ingest_mode": record.get("ingest_mode")}
+    return {"ok": True, "token": token, "sheet_label": label,
+            "ingest_mode": fields.get("ingest_mode"), "provisioned": created}
 
 
 @router.post("/{token}/ingest-config")
 async def set_ingest_config(token: str, payload: IngestConfig):
-    """Set per-sheet direct-ingestion config on the header-mapping record (JSON).
-
-    Merge-safe: only the provided fields are changed; existing header mapping /
-    type / override settings are preserved."""
+    """Set per-sheet direct-ingestion config (JSON). Creates the session if the
+    token is new. Merge-safe: only provided fields change."""
     from server import db
-    sess = await _get_by_token(db, token)
     fields = {
         "ingest_mode": payload.ingest_mode, "sheet_id": payload.sheet_id,
         "gid": payload.gid, "cache_ttl_seconds": payload.cache_ttl_seconds,
         "header_row": payload.header_row, "department": payload.department,
     }
-    return await _apply_ingest_config(db, sess, token, payload.sheet_label, fields)
+    return await _apply_ingest_config(db, token, payload.sheet_label, fields)
 
 
 @router.get("/{token}/ingest-config")
@@ -1585,14 +1632,13 @@ async def set_ingest_config_get(
     header_row: Optional[int] = None,
     department: Optional[str] = None,
 ):
-    """Browser-friendly GET variant — set direct ingestion by opening a URL, e.g.:
+    """Browser-friendly GET — set direct ingestion by opening a URL, e.g.:
        /api/public/<token>/ingest-config?ingest_mode=direct&sheet_id=<ID>&gid=0
-    sheet_label is optional (defaults to the token's first connected sheet)."""
+    Creates the session if the token is new; sheet_label optional."""
     from server import db
-    sess = await _get_by_token(db, token)
     fields = {
         "ingest_mode": ingest_mode, "sheet_id": sheet_id, "gid": gid,
         "cache_ttl_seconds": cache_ttl_seconds, "header_row": header_row,
         "department": department,
     }
-    return await _apply_ingest_config(db, sess, token, sheet_label, fields)
+    return await _apply_ingest_config(db, token, sheet_label, fields)
