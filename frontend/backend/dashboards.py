@@ -24,8 +24,12 @@ def _to_number(v):
         return None
     if isinstance(v, (int, float)):
         return float(v)
-    s = str(v).strip().replace(",", "")
-    if s == "" or not _NUM_RE.match(str(v).strip()):
+    # Tolerate Indian grouping ("2,08,13,53,972"), quotes, and stray % — strip ALL
+    # thousands separators, keep the decimal point and leading minus.
+    s = str(v).strip().strip('"').strip("'").strip().replace("%", "").replace(",", "")
+    if s in ("", "-", "—", "–"):
+        return None
+    if not re.match(r"^-?\d*\.?\d+$", s):
         return None
     try:
         return float(s)

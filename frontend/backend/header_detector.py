@@ -66,17 +66,24 @@ def _build_stable_keys(header_vals: List[Any]) -> List[str]:
 
 
 def _auto_header_index(rows_raw: List[Dict[str, Any]], max_scan: int = 15) -> int:
-    """First row (top-down) whose column-A cell is a non-empty, non-numeric string.
+    """First row (top-down) that looks like a real header:
+      - column A is a non-empty, NON-numeric string, AND
+      - the majority of its cells are non-empty.
 
-    Drops grand-total/value rows that sit above the real header. Falls back to 0
-    when no such row is found (a normal sheet's header is row 0 → unchanged)."""
+    This skips leading blank rows and sparse totals/numeric rows (e.g. a totals
+    row with values only in the right-hand columns and an empty/label column A)
+    that sit above the real header. Falls back to 0 when no such row is found
+    (a normal sheet whose header is already row 0 → unchanged)."""
     for i, row in enumerate(rows_raw[:max_scan]):
         vals = list(row.values())
         if not vals:
             continue
         first = vals[0]
         cell = "" if first is None else str(first).strip()
-        if cell and not _is_numeric(cell):
+        if not cell or _is_numeric(cell):
+            continue
+        non_empty = sum(1 for v in vals if v is not None and str(v).strip())
+        if non_empty * 2 > len(vals):  # strict majority of cells filled
             return i
     return 0
 
@@ -185,7 +192,17 @@ def resolve_headers(
     existing_keys = [str(k) for k in rows_raw[0].keys()]
 
     # ── USER OVERRIDE ──────────────────────────────────────────────────────
-    if header_mapping:
+    # Only treat the mapping as a header override when it actually carries a
+    # header directive. A mapping that holds *only* ingest config (sheet_id,
+    # ingest_mode, …) must fall through to auto-detection, not turn the column
+    # letters into headers.
+    _has_directive = bool(header_mapping) and (
+        header_mapping.get("by_index")
+        or header_mapping.get("header_row_index") is not None
+        or header_mapping.get("header_row") is not None
+        or (header_mapping.get("column_overrides") or {})
+    )
+    if header_mapping and _has_directive:
         overrides: Dict[str, str] = header_mapping.get("column_overrides") or {}
 
         # MODE B: position-based column naming
