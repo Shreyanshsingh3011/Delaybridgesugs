@@ -1511,37 +1511,39 @@ class IngestConfig(BaseModel):
     department: Optional[str] = None
 
 
-@router.post("/{token}/ingest-config")
-async def set_ingest_config(token: str, payload: IngestConfig):
-    """Set per-sheet direct-ingestion config on the header-mapping record.
+async def _apply_ingest_config(
+    db, sess: Dict[str, Any], token: str, sheet_label: Optional[str],
+    fields: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Merge-safe write of direct-ingestion config into dbridge_header_mappings.
 
-    Merge-safe: only the provided fields are changed; existing header mapping /
-    type / override settings are preserved. Flip a sheet to direct Google
-    ingestion with ingest_mode='direct' + sheet_id (+ optional gid/header_row)."""
-    from server import db
-    await _get_by_token(db, token)
-    record_id = f"{token}__{payload.sheet_label}"
+    If sheet_label is omitted, defaults to the session's first connected sheet
+    (so single-sheet tokens need no label). Only provided fields are changed."""
+    if not sheet_label:
+        connected = [s for s in sess.get("sheets", []) if s.get("connected")]
+        if not connected:
+            raise HTTPException(status_code=404, detail="No connected sheets for this token.")
+        sheet_label = connected[0].get("label")
 
+    record_id = f"{token}__{sheet_label}"
     existing: Dict[str, Any] = {}
     try:
         rows = await db.raw_select("dbridge_header_mappings", {"id": record_id})
         if rows:
             existing = rows[0]
     except Exception as e:
-        logger.warning("set_ingest_config: fetch existing failed: %s", e)
+        logger.warning("_apply_ingest_config: fetch existing failed: %s", e)
 
     record = dict(existing)
     record.update({
         "id": record_id,
         "token": token,
-        "sheet_label": payload.sheet_label,
+        "sheet_label": sheet_label,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
-    for field in ("ingest_mode", "sheet_id", "gid", "cache_ttl_seconds",
-                  "header_row", "department"):
-        val = getattr(payload, field)
+    for key, val in fields.items():
         if val is not None:
-            record[field] = val
+            record[key] = val
 
     # Direct ingestion changes the upstream rows — drop any stale direct cache.
     if record.get("sheet_id"):
@@ -1552,4 +1554,45 @@ async def set_ingest_config(token: str, payload: IngestConfig):
             pass
 
     await db.raw_upsert("dbridge_header_mappings", record)
-    return {"ok": True, "id": record_id, "ingest_mode": record.get("ingest_mode")}
+    return {"ok": True, "id": record_id, "sheet_label": sheet_label,
+            "ingest_mode": record.get("ingest_mode")}
+
+
+@router.post("/{token}/ingest-config")
+async def set_ingest_config(token: str, payload: IngestConfig):
+    """Set per-sheet direct-ingestion config on the header-mapping record (JSON).
+
+    Merge-safe: only the provided fields are changed; existing header mapping /
+    type / override settings are preserved."""
+    from server import db
+    sess = await _get_by_token(db, token)
+    fields = {
+        "ingest_mode": payload.ingest_mode, "sheet_id": payload.sheet_id,
+        "gid": payload.gid, "cache_ttl_seconds": payload.cache_ttl_seconds,
+        "header_row": payload.header_row, "department": payload.department,
+    }
+    return await _apply_ingest_config(db, sess, token, payload.sheet_label, fields)
+
+
+@router.get("/{token}/ingest-config")
+async def set_ingest_config_get(
+    token: str,
+    ingest_mode: Optional[str] = None,
+    sheet_id: Optional[str] = None,
+    gid: Optional[str] = None,
+    sheet_label: Optional[str] = None,
+    cache_ttl_seconds: Optional[int] = None,
+    header_row: Optional[int] = None,
+    department: Optional[str] = None,
+):
+    """Browser-friendly GET variant — set direct ingestion by opening a URL, e.g.:
+       /api/public/<token>/ingest-config?ingest_mode=direct&sheet_id=<ID>&gid=0
+    sheet_label is optional (defaults to the token's first connected sheet)."""
+    from server import db
+    sess = await _get_by_token(db, token)
+    fields = {
+        "ingest_mode": ingest_mode, "sheet_id": sheet_id, "gid": gid,
+        "cache_ttl_seconds": cache_ttl_seconds, "header_row": header_row,
+        "department": department,
+    }
+    return await _apply_ingest_config(db, sess, token, sheet_label, fields)
