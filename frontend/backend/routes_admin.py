@@ -25,6 +25,8 @@ from models import (
     SHEET_COLORS,
 )
 from sheet_fetcher import fetch_apps_script
+from sheet_source import load_direct_sheet, SheetAccessError
+import re as _re
 from normalizer import detect_columns, normalize_rows, data_quality
 from analysis import analyze_single_sheet
 from variance import compute_variances, column_similarity
@@ -199,6 +201,49 @@ async def delete_session(sid: str, current=Depends(get_current_user)):
 
 
 # -------- Sheets --------
+
+_GSHEET_RE = _re.compile(r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)")
+
+
+def _parse_google_sheet_url(url: str):
+    """Return (sheet_id, gid) if `url` is a Google Sheets link, else (None, None).
+    Handles gid in ?gid=, &gid= or #gid=; defaults gid to '0'."""
+    if not url:
+        return None, None
+    m = _GSHEET_RE.search(url)
+    if not m:
+        return None, None
+    sheet_id = m.group(1)
+    gid = "0"
+    gm = _re.search(r"[?#&]gid=([0-9]+)", url)
+    if gm:
+        gid = gm.group(1)
+    return sheet_id, gid
+
+
+def _fetch_sheet_for_url(url: str):
+    """Unified sheet fetch. A Google Sheets link is read directly via CSV export
+    (ingest_mode=direct); anything else falls back to the Apps Script Web App.
+    Returns (ok, msg, rows_raw, ingest_fields)."""
+    sheet_id, gid = _parse_google_sheet_url(url)
+    if sheet_id:
+        try:
+            rows_raw = load_direct_sheet(sheet_id, gid)
+        except SheetAccessError as e:
+            return False, str(e), [], {}
+        except Exception as e:  # noqa: BLE001
+            return False, f"Could not read sheet: {e}", [], {}
+        if not rows_raw:
+            return False, "Sheet appears empty or unreadable.", [], {}
+        return True, f"Connected directly ({len(rows_raw)} rows).", rows_raw, {
+            "ingest_mode": "direct",
+            "sheet_id": sheet_id,
+            "gid": gid,
+        }
+    ok, msg, rows_raw = fetch_apps_script(url)
+    return ok, msg, rows_raw, {}
+
+
 def _build_sheet_record(
     label: str, url: str, name: Optional[str], rows_raw, status_msg: str, connected: bool,
     header_mapping: Optional[Dict[str, Any]] = None,
@@ -235,11 +280,12 @@ async def add_sheet(sid: str, payload: SheetAdd, current=Depends(get_current_use
     label = payload.label or _next_label(used)
     if label in used:
         raise HTTPException(status_code=400, detail=f"Sheet label {label} already used.")
-    ok, msg, rows_raw = fetch_apps_script(payload.url)
+    ok, msg, rows_raw, ingest_fields = _fetch_sheet_for_url(payload.url)
     token = sess.get("public_token", "")
     hm_rows = await db.raw_select("dbridge_header_mappings", {"token": token, "sheet_label": label})
     hm = hm_rows[0] if hm_rows else None
     record = _build_sheet_record(label, payload.url, None, rows_raw, msg, ok, header_mapping=hm)
+    record.update(ingest_fields)
     # quality only if connected
     if ok:
         resolved = record.get("rows_resolved") or rows_raw
@@ -286,7 +332,7 @@ async def refresh_sheet(sid: str, label: str, current=Depends(get_current_user))
     target = next((s for s in sess.get("sheets", []) if s["label"] == label), None)
     if not target:
         raise HTTPException(status_code=404, detail="Sheet not found.")
-    ok, msg, rows_raw = fetch_apps_script(target["url"])
+    ok, msg, rows_raw, ingest_fields = _fetch_sheet_for_url(target["url"])
     if not ok:
         await db.sessions.update_one(
             {"id": sid, "owner_id": current["id"], "sheets.label": label},
@@ -311,6 +357,7 @@ async def refresh_sheet(sid: str, label: str, current=Depends(get_current_user))
             "sheets.$.last_fetched": datetime.now(timezone.utc).isoformat(),
             "sheets.$.connected": True,
             "sheets.$.status_msg": msg,
+            **({f"sheets.$.{k}": v for k, v in ingest_fields.items()}),
             "sheets.$.data_quality": data_quality(resolved_rows, normalized),
             "sheets.$.pruned_empty_columns": n_pruned,
             "updated_at": datetime.now(timezone.utc).isoformat(),
