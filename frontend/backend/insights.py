@@ -9,7 +9,7 @@ import statistics
 from typing import Any, Dict, List, Optional
 from collections import Counter, defaultdict
 
-from dashboards import _infer_columns, _to_number
+from dashboards import _infer_columns, _to_number, _ID_PAT
 
 _TOTAL_RE = re.compile(r"\b(sub\s*total|grand\s*total|total)\b", re.I)
 
@@ -23,6 +23,108 @@ def _is_total_row(row):
         if isinstance(v, str) and _TOTAL_RE.search(v):
             return True
     return False
+
+
+# ── Generic, data-driven column-role inference (works for ANY sheet) ──────────
+# Everything below is derived from the rows+columns themselves. A sheet-type may
+# optionally supply `column_roles` to refine these guesses, but nothing here
+# depends on a type existing.
+
+def _nums(rows, col):
+    out = []
+    for r in rows:
+        x = _to_number(r.get(col))
+        if x is not None:
+            out.append(x)
+    return out
+
+
+def _distinct(rows, col):
+    return len(set(str(r.get(col)) for r in rows if r.get(col) not in (None, "")))
+
+
+def _looks_serial(vals):
+    """Values look like a row serial/index: mostly distinct integers packed into ~1..N."""
+    nums = [v for v in (_to_number(x) for x in vals) if v is not None]
+    if len(nums) < 5:
+        return False
+    ints = [n for n in nums if float(n).is_integer()]
+    if len(ints) < 0.95 * len(nums):
+        return False
+    distinct = len(set(ints))
+    if distinct >= 0.95 * len(ints):
+        lo, hi = min(ints), max(ints)
+        if lo >= 0 and (hi - lo + 1) <= 1.2 * len(ints):
+            return True
+    return False
+
+
+def _is_identifier(name, vals):
+    """A numeric column is an identifier if its NAME looks id-like or its VALUES look serial."""
+    if _ID_PAT.search(str(name or "")):
+        return True
+    return _looks_serial(vals)
+
+
+def _roles(sheet):
+    r = sheet.get("column_roles") if isinstance(sheet, dict) else None
+    return r if isinstance(r, dict) else {}
+
+
+def _measure_cols(rows, cols, roles):
+    """Real numeric measures: numeric columns minus identifiers (by name or serial values)."""
+    numeric = [c["name"] for c in cols if c["type"] == "number"]
+    ids = set(roles.get("identifiers") or [])
+    sample = rows[:200]
+    out = []
+    for name in numeric:
+        if name in ids:
+            continue
+        if _is_identifier(name, [r.get(name) for r in sample]):
+            continue
+        out.append(name)
+    return out or numeric
+
+
+def _dim_cols(rows, cols, roles):
+    """Usable dimensions: categorical/text columns that aren't constant or unique-per-row."""
+    cats = [c["name"] for c in cols if c["type"] in ("category", "text")]
+    n = len(rows) or 1
+    good = []
+    for name in cats:
+        d = _distinct(rows, name)
+        if d <= 1 or d >= 0.9 * n:
+            continue
+        good.append(name)
+    return good or cats
+
+
+def _default_dimension(rows, cols, roles, headers):
+    dd = roles.get("default_dimension")
+    if dd and dd in headers:
+        return dd
+    for d in (roles.get("dimensions") or []):
+        if d in headers:
+            return d
+    good = _dim_cols(rows, cols, roles)
+    if good:
+        return min(good, key=lambda c: _distinct(rows, c))
+    return headers[0] if headers else None
+
+
+def _default_measure(rows, roles, measures):
+    dm = roles.get("default_measure")
+    if dm and dm in measures:
+        return dm
+    qty = [c for c in (roles.get("quantity_columns") or []) if c in measures]
+    rate = set(roles.get("rate_columns") or [])
+    pool = qty or [m for m in measures if m not in rate] or measures
+    best, best_abs = None, -1.0
+    for c in pool:
+        a = abs(sum(_nums(rows, c)))
+        if a > best_abs:
+            best_abs, best = a, c
+    return best
 
 
 def _quality_for_sheet(sheet):
@@ -120,15 +222,17 @@ def build_pivot(sheets: List[Dict[str, Any]], dimension: Optional[str] = None,
     rows = sheet.get("rows_raw") or []
     headers = list(rows[0].keys()) if rows else (sheet.get("headers") or [])
     cols = _infer_columns(rows, headers)
-    dims = [c["name"] for c in cols if c["type"] in ("category", "text")]
-    measures = [c["name"] for c in cols if c["type"] == "number"]
+    roles = _roles(sheet)
 
     if not include_totals:
         rows = [r for r in rows if not _is_total_row(r)]
 
-    dimension = dimension if dimension in headers else (dims[0] if dims else (headers[0] if headers else None))
+    dims = _dim_cols(rows, cols, roles)
+    measures = _measure_cols(rows, cols, roles)  # excludes identifiers/serials like "Sr. No."
+
+    dimension = dimension if dimension in headers else _default_dimension(rows, cols, roles, headers)
     if agg != "count":
-        measure = measure if measure in measures else (measures[0] if measures else None)
+        measure = measure if measure in measures else _default_measure(rows, roles, measures)
         if measure is None:
             agg = "count"
 
@@ -178,10 +282,14 @@ def build_anomalies(sheets: List[Dict[str, Any]], column: Optional[str] = None,
     rows = [r for r in (sheet.get("rows_raw") or []) if not _is_total_row(r)]
     headers = list(rows[0].keys()) if rows else (sheet.get("headers") or [])
     cols = _infer_columns(rows, headers)
-    numeric = [c["name"] for c in cols if c["type"] == "number"]
+    roles = _roles(sheet)
+    numeric_all = [c["name"] for c in cols if c["type"] == "number"]
+    numeric = _measure_cols(rows, cols, roles)  # drop identifiers/serials (e.g. "Sr. No.")
+    rate = set(roles.get("rate_columns") or [])
+    scan = [n for n in numeric if n not in rate] or numeric  # rates are noisy across mixed items
     label_col = next((c["name"] for c in cols if c["type"] in ("category", "text")), None)
     thr = {"low": 5.0, "medium": 3.5, "high": 2.5}.get(sensitivity, 3.5)
-    targets = [column] if column in numeric else numeric
+    targets = [column] if column in numeric_all else scan
 
     anomalies = []
     for col in targets:
@@ -310,10 +418,11 @@ def build_whatif(sheets: List[Dict[str, Any]], dimension: Optional[str] = None,
     rows = [r for r in (sheet.get("rows_raw") or []) if not _is_total_row(r)]
     headers = list(rows[0].keys()) if rows else (sheet.get("headers") or [])
     cols = _infer_columns(rows, headers)
-    dims = [c["name"] for c in cols if c["type"] in ("category", "text")]
-    measures = [c["name"] for c in cols if c["type"] == "number"]
-    dimension = dimension if dimension in headers else (dims[0] if dims else None)
-    measure = measure if measure in measures else (measures[0] if measures else None)
+    roles = _roles(sheet)
+    dims = _dim_cols(rows, cols, roles)
+    measures = _measure_cols(rows, cols, roles)  # excludes identifiers/serials
+    dimension = dimension if dimension in headers else _default_dimension(rows, cols, roles, headers)
+    measure = measure if measure in measures else _default_measure(rows, roles, measures)
     if not measure or not dimension:
         return {"enabled": True, "error": "Need a categorical dimension and a numeric measure.",
                 "available_dimensions": dims, "available_measures": measures,
@@ -343,3 +452,48 @@ def build_whatif(sheets: List[Dict[str, Any]], dimension: Optional[str] = None,
         "delta": round(adj_total - base_total, 2),
         "delta_pct": round((adj_total - base_total) / base_total * 100, 2) if base_total else 0,
     }
+
+
+def build_stock_views(sheets: List[Dict[str, Any]], sheet_label: Optional[str] = None) -> Dict[str, Any]:
+    """Inventory-specific views (top consumers, low-balance items). Gated to sheets whose
+    resolved type supplies column_roles (item_dimension + consumption/balance). For any
+    sheet without those roles this returns enabled=False and renders nothing."""
+    sheet = _pick_sheet(sheets, sheet_label)
+    if not sheet:
+        return {"enabled": False, "reason": "no sheet"}
+    roles = _roles(sheet)
+    rows_all = sheet.get("rows_raw") or []
+    headers = sheet.get("headers") or (list(rows_all[0].keys()) if rows_all else [])
+    headers = [h["name"] if isinstance(h, dict) else str(h) for h in headers]
+    item_dim = roles.get("item_dimension")
+    if not roles or not item_dim or item_dim not in headers:
+        return {"enabled": False, "reason": "not an inventory-typed sheet"}
+
+    rows = [r for r in rows_all if not _is_total_row(r)]
+
+    def _rank(measure_col, reverse=True, limit=15):
+        agg = defaultdict(float)
+        for r in rows:
+            k = r.get(item_dim)
+            m = _to_number(r.get(measure_col))
+            if k in (None, "") or m is None:
+                continue
+            agg[str(k)] += m
+        ordered = sorted(agg.items(), key=lambda x: (-x[1] if reverse else x[1]))
+        return [{"key": k, "value": round(v, 2)} for k, v in ordered[:limit]]
+
+    out = {"enabled": True, "sheet": sheet.get("label"), "item_dimension": item_dim, "views": []}
+
+    cons = roles.get("consumption_column")
+    if cons and cons in headers:
+        out["top_consumers"] = {"measure": cons, "data": _rank(cons, reverse=True)}
+        out["views"].append("top_consumers")
+
+    bal = next((b for b in (roles.get("balance_columns") or []) if b in headers), None)
+    if bal:
+        out["low_balance"] = {"measure": bal, "data": _rank(bal, reverse=False)}
+        out["views"].append("low_balance")
+
+    if not out["views"]:
+        return {"enabled": False, "reason": "no consumption/balance columns present"}
+    return out
