@@ -410,7 +410,13 @@ async def get_dashboard(token: str):
         add("digest", lambda: build_digest(sheets))
         add("recommendations", lambda: build_recommendations(sheets))
         add("whatif", lambda: build_whatif(sheets))
-        add("stock_views", lambda: build_stock_views(sheets))
+        # stock_views self-disables for non-inventory sheets, so compute it
+        # unconditionally instead of gating on export_fields (a new field name that
+        # older configured sessions won't list).
+        try:
+            modules["stock_views"] = build_stock_views(sheets)
+        except Exception as e:
+            logger.warning("dashboard module stock_views failed: %s", e)
         add("forecast", lambda: build_forecast(sheets))
     except Exception as e:
         logger.warning("dashboard module import failed: %s", e)
