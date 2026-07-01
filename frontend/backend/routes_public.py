@@ -338,6 +338,26 @@ async def get_dashboard(token: str):
         except Exception:
             s["type_kpis"] = []
 
+    # Attach column_roles (from the resolved sheet-type) so the generic analytics
+    # modules can refine their data-driven defaults. Untyped sheets simply get no
+    # roles and fall back to pure data-driven inference.
+    try:
+        from sheet_loader import detect_sheet_type
+        for s in sheets:
+            try:
+                st = s.get("sheet_type") or await detect_sheet_type(
+                    db, s.get("headers") or [], s.get("type_override"))
+                s["sheet_type"] = st
+                trows = await db.raw_select("dbridge_sheet_types", {"id": st})
+                cr = ((trows[0].get("analysis_rules") or {}).get("column_roles")
+                      if trows else None)
+                if cr:
+                    s["column_roles"] = cr
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("attach column_roles failed: %s", e)
+
     # Data dashboard (KPIs / charts / table per sheet)
     out["data_dashboard_enabled"] = want("data_dashboard")
     if want("data_dashboard"):
@@ -381,7 +401,8 @@ async def get_dashboard(token: str):
 
     try:
         from insights import (build_data_quality, build_pivot, build_anomalies,
-                              build_digest, build_recommendations, build_whatif)
+                              build_digest, build_recommendations, build_whatif,
+                              build_stock_views)
         from forecast import build_forecast
         add("data_quality", lambda: build_data_quality(sheets))
         add("pivot", lambda: build_pivot(sheets))
@@ -389,6 +410,7 @@ async def get_dashboard(token: str):
         add("digest", lambda: build_digest(sheets))
         add("recommendations", lambda: build_recommendations(sheets))
         add("whatif", lambda: build_whatif(sheets))
+        add("stock_views", lambda: build_stock_views(sheets))
         add("forecast", lambda: build_forecast(sheets))
     except Exception as e:
         logger.warning("dashboard module import failed: %s", e)
